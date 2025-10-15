@@ -1,0 +1,16 @@
+let a;
+let b;
+a = 1;
+b = 2;
+a = a + b;
+b = a = b+2;
+
+if a < b {
+  a = a + 1;
+} else {
+  b = b + 1;
+}
+
+while a < 10 {
+  a = a + 1;
+}
