@@ -34,9 +34,12 @@ void yyerror(const char* msg) {
     ASTNode_LIST* node_list;
 }
 
-%left '+' '-'
+%right '='
+%left '<' '>' LE GE EQ NE
+
+%left '+' '-' 
 %left '*' '/'
-%left LE GE EQ NE
+
 %token <num> INTEGER
 %token <str> IDENTIFIER
 %token LET IF ELSE WHILE

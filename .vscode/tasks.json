@@ -23,7 +23,43 @@
             ],
             "group": {
                 "kind": "build",
-                "isDefault": true
+            }
+        },
+        {
+            "label": "Meson: setup build",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "setup",
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+            }
+        },
+        {
+            "label": "Meson: compile",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "compile",
+                "-C",
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+            }
+        },
+        {
+            "label": "Run",
+            "type": "shell",
+            "command": "./cyrilcc",
+            "args": [
+                "arg1",
+                "arg2"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
             }
         },
         {
