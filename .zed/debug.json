@@ -1,0 +1,14 @@
+[
+    {
+        "label": "Debug with Meson",
+        "build": {
+            "command": "meson",
+            "args": ["compile", "-C", "build"],
+            "cwd": "${ZED_WORKTREE_ROOT}"
+        },
+        "program": "${ZED_WORKTREE_ROOT}/build/cyrilcc",
+        "request": "launch",
+        "adapter": "CodeLLDB",
+        "args": ["./test/basic/func.m"]
+    }
+]

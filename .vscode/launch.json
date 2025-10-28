@@ -6,7 +6,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/cyrilcc",
-            "args": ["test_input"],
+            "args": ["test/assign.m"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

@@ -13,15 +13,23 @@ int yywrap() { return 1; }
 %}
 
 %option yylineno
+%option nounput
+%option noinput
 
 %%
 
-"let" { return LET; }
 "if" { return IF; }
 "else" { return ELSE; }
 "while" { return WHILE; }
+"return" { return RETURN; }
+"continue" { return CONTINUE; }
+"break" { return BREAK; }
+"int" { return INT;}
+"char" { return CHAR;}
+"input" { return INPUT;}
+"output" { return OUTPUT;}
 
-"+"|"-"|"*"|"/"|"("|")"|"<"|">"|"{"|"}"|";"|"=" {
+"+"|"-"|"*"|"/"|"("|")"|"<"|">"|"{"|"}"|";"|"="|","|":"|"["|"]"|"."|"&"|"*" {
     DBG_PRINT("SYMBOL: %s\n", yytext);
 	return *yytext;
 }
@@ -38,6 +46,18 @@ int yywrap() { return 1; }
 	return INTEGER;
 }
 
+\'[^\']\' {
+    DBG_PRINT("CHARACTER: %s\n", yytext);
+    yylval.num = yytext[1];
+    return CHARACTER;
+}
+
+\"(\\.|[^\\"])*\" {
+    DBG_PRINT("STRING_LITERAL: %s\n", yytext);
+    yylval.str = strdup(yytext + 1);
+    yylval.str[yyleng - 2] = '\0';
+    return STRING_LITERAL; // TODO 需要编写转义程序
+}
 
 [ \t\r\n]
 
