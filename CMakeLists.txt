@@ -17,7 +17,7 @@ flex_target(LEXER "${SRC_DIR}/lexer.l" "${LEXER_OUT}" DEFINES_FILE "${PARSER_DIR
 bison_target(PARSER "${SRC_DIR}/parser.y" "${PARSER_OUT}" DEFINES_FILE "${PARSER_DIR}/parser.h")
 add_flex_bison_dependency(LEXER PARSER)
 
-add_executable(cyrilcc "${SRC_DIR}/main.cpp" "${LEXER_OUT}" "${PARSER_OUT}" "${SRC_DIR}/symbol.cpp" "${SRC_DIR}/ast.cpp")
+add_executable(cyrilcc "${SRC_DIR}/main.cpp" "${LEXER_OUT}" "${PARSER_OUT}" "${SRC_DIR}/symbol.cpp" "${SRC_DIR}/ast.cpp" "${SRC_DIR}/ir.cpp")
 target_include_directories(cyrilcc PRIVATE "${PARSER_DIR}" "${SRC_DIR}")
 
 
@@ -29,7 +29,7 @@ target_include_directories(cyrilcc PRIVATE "${PARSER_DIR}" "${SRC_DIR}")
 
 # Set default build type to Debug if not specified
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
 
 # Add debug flags

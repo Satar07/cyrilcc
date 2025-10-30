@@ -1,6 +1,7 @@
 - TypeKind
 - BinaryOpKind
 - ASTNode
+    - ProgramNode
     - TypeSpecifierNode
     - FunctionDefinitionNode
     - ParameterDeclarationNode
@@ -22,3 +23,62 @@
         - BinaryOpNode
         - AssignmentNode
         - FunctionCallNode
+
+---
+
+Program:
+
+- VarDeclarations:
+    - Type: int
+    - Define var: i
+- FunctionDefinition: main -> int
+    - Parameters:
+    - Body:
+        - VarDeclarations:
+            - Type: int
+            - Define var: a
+            - Define var: b
+            - Define var: c
+        - Input:
+            - VarRef: a
+        - Input:
+            - VarRef: b
+        - Assign:
+            - VarRef: c
+            - FuncCall: max
+                - Args:
+                    - VarRef: a
+                    - VarRef: b
+        - Output:
+            - VarRef: c
+        - Output:
+            - String: " "
+        - Assign:
+            - VarRef: i
+                - VarRef: i
+            -   -
+                * Int: 1
+        - Output:
+            - VarRef: i
+        - Output:
+            - String: "\n"
+- FunctionDefinition: max -> int
+    - Parameters:
+        - Param: x (int)
+        - Param: y (int)
+    - Body:
+        - If:
+            - Condition:
+                - VarRef: x
+                - >
+                    - VarRef: y
+            - Then:
+                - Assign:
+                    - VarRef: i
+                    - VarRef: x
+            - Else:
+                - Assign:
+                    - VarRef: i
+                    - VarRef: y
+        - Return:
+            - VarRef: i

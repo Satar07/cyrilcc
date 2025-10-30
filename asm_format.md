@@ -1,11 +1,11 @@
-
 ## 概要约定（全局）
 
 - 寄存器：reg[0..15]（32-bit 整数）
     - reg[0] = R_FLAG（标志寄存器，用于 TST 指令）
     - reg[1] = R_IP（指令指针 / 程序计数器）
     - reg[15] 常被 I/O 指令作为数据寄存器使用（约定）
-- 内存：字节寻址，大小 MEMMAX = 256 * 256 = 65536 字节
+- 内存：字节寻址，大小 MEMMAX = 256 \* 256 = 65536 字节
+- 立即数直接写十进制数即可
 - 指令固定 8 字节（64 位）：
     - offset 0-1（2 字节，16-bit）：opcode（无符号）
     - offset 2（1 字节，8-bit）：rx
@@ -96,7 +96,7 @@
     - 语义：reg[rx] -= reg[ry]
 - MUL reg, immediate
     - opcode：I_MUL_0 = 0x50
-    - 语义：reg[rx] *= constant
+    - 语义：reg[rx] \*= constant
     - 副作用：cycle += 4; mul_div++
 - MUL reg, reg
     - opcode：I_MUL_1 = 0x51
@@ -142,7 +142,7 @@
     - 语义：若 reg[R_FLAG] == FLAG_GZ 则跳转
 
 5. 载入 / 常量 / 立即 / 寄存器拷贝 / 内存载入形式
-    多个变种（LOD_0..LOD_5, LDC_3/4/5 表示载字节而非 32-bit 整数）
+   多个变种（LOD_0..LOD_5, LDC_3/4/5 表示载字节而非 32-bit 整数）
 
 - LOD Rx, immediate
     - opcode：I_LOD_0 = 0x10
@@ -155,7 +155,7 @@
     - 语义：reg[rx] = reg[ry] + constant
 - LOD Rx, (immediate) -> load int32 from memory address immediate
     - opcode：I_LOD_3 = 0x13
-    - 语义：cycle += 9; mem_r++; reg[rx] = _(int_)&mem[constant]
+    - 语义：cycle += 9; mem*r++; reg[rx] = *(int\_)&mem[constant]
     - 说明：读取 4 字节小端整型
 - LDC Rx, (immediate) -> load char (byte) into reg
     - opcode：I_LDC_3 = 0x113 (注意：宏为 0x113，超出 1 字节，但机器只读取低 16-bit 作 opcode)
@@ -163,37 +163,37 @@
     - 注意：虽然宏值为 0x113，但在文件/内存中写入时仍照 16-bit 存储（0x113 即两字节 0x13 0x01 小端? 实际存入时按整数的两字节低位和高位；详见下面“特殊 opcode 注意”）
 - LOD Rx, (Ry)
     - opcode：I_LOD_4 = 0x14
-    - 语义：cycle += 9; mem_r++; reg[rx] = _(int_)&mem[reg[ry]]
+    - 语义：cycle += 9; mem*r++; reg[rx] = *(int\_)&mem[reg[ry]]
 - LDC Rx, (Ry)
     - opcode：I_LDC_4 = 0x114
     - 语义：cycle += 9; mem_r++; reg[rx] = mem[reg[ry]]
 - LOD Rx, (Ry + imm)
     - opcode：I_LOD_5 = 0x15
-    - 语义：cycle += 9; mem_r++; reg[rx] = _(int_)&mem[reg[ry] + constant]
+    - 语义：cycle += 9; mem*r++; reg[rx] = *(int\_)&mem[reg[ry] + constant]
 - LDC Rx, (Ry + imm)
     - opcode：I_LDC_5 = 0x115
     - 语义：cycle += 9; mem_r++; reg[rx] = mem[reg[ry] + constant]
 
-注意 LDC_* 的宏值在 inst.h 中写为 0x113、0x114、0x115 —— 它们的高位只是为了在宏名上区分，但真实机器使用时，instruction() 在 machine.c 里是：
-op = (_(int_)&(mem[addr])) & 0xffff;
+注意 LDC*\* 的宏值在 inst.h 中写为 0x113、0x114、0x115 —— 它们的高位只是为了在宏名上区分，但真实机器使用时，instruction() 在 machine.c 里是：
+op = (*(int\_)&(mem[addr])) & 0xffff;
 因此 op 是取内存低 16 位，所以写入器/汇编器需要把 opcode 按 16-bit 存到指令前两字节（低字节、次字节）。例如宏 0x113 = 0x0113 → 两字节 [0x13, 0x01]。因此无需特殊处理，只需写入 16-bit 值即可。
 
 6. 存储（写入内存）
 
 - STO (Rx), immediate -> 写入 32-bit 整数 constant 到内存地址 reg[rx]
     - opcode：I_STO_0 = 0x20
-    - 语义：cycle += 9; mem_w++; _(int_)&mem[reg[rx]] = constant
+    - 语义：cycle += 9; mem*w++; *(int\_)&mem[reg[rx]] = constant
 - STC (Rx), immediate -> 写入 8-bit 常数到 mem[reg[rx]]
     - opcode：I_STC_0 = 0x120
 - STO (Rx), Ry -> 写 reg[ry] (32-bit) 到 mem[reg[rx]]
     - opcode：I_STO_1 = 0x21
 - STC (Rx), Ry -> mem[reg[rx]] = reg[ry] (低 8 位)
     - opcode：I_STC_1 = 0x121
-- STO (Rx), Ry + imm -> _(int_)&mem[reg[rx]] = reg[ry] + constant
+- STO (Rx), Ry + imm -> *(int*)&mem[reg[rx]] = reg[ry] + constant
     - opcode：I_STO_2 = 0x22
 - STC (Rx), Ry + imm
     - opcode：I_STC_2 = 0x122
-- STO (Rx + imm), Ry -> _(int_)&mem[reg[rx] + constant] = reg[ry]
+- STO (Rx + imm), Ry -> *(int*)&mem[reg[rx] + constant] = reg[ry]
     - opcode：I_STO_3 = 0x23
 - STC (Rx + imm), Ry
     - opcode：I_STC_3 = 0x123
@@ -214,11 +214,11 @@ op = (_(int_)&(mem[addr])) & 0xffff;
 8. 特殊注意 - opcode 宏超过 0xff/0xfff
 
 - 某些宏写为 0x113 等（超过 8-bit），但机器在内存里读取 opcode 时使用下述逻辑：
-    op = (_(int_)&(mem[addr])) & 0xffff;
-    因此 op 占 16-bit，汇编器需把宏值写入 16-bit（两字节），例如 0x113 -> bytes 0x13 0x01（低字节 0x13 首）。确认汇编器在生成文件时以小端写入 opcode 的低 16 位。
+  op = (_(int_)&(mem[addr])) & 0xffff;
+  因此 op 占 16-bit，汇编器需把宏值写入 16-bit（两字节），例如 0x113 -> bytes 0x13 0x01（低字节 0x13 首）。确认汇编器在生成文件时以小端写入 opcode 的低 16 位。
 
 9. 示例编码与二进制表示（小端）
-    指令总体格式 8 字节： [op_low, op_high, rx, ry, const0, const1, const2, const3]
+   指令总体格式 8 字节： [op_low, op_high, rx, ry, const0, const1, const2, const3]
 
 举例：
 
@@ -335,16 +335,16 @@ op = (_(int_)&(mem[addr])) & 0xffff;
 3. 条件跳转示例（if R5 == 0 goto label）
 
 - 汇编序列：
-    TST R5
-    JEZ label
+  TST R5
+  JEZ label
 - 机器：
-    TST -> 70 00 05 00 00 00 00 00
-    JEZ label -> 82 00 00 00 <label_addr 4 bytes>
+  TST -> 70 00 05 00 00 00 00 00
+  JEZ label -> 82 00 00 00 <label_addr 4 bytes>
 
 4. 写字符串到数据段并输出（概念）
 
 - 数据段（使用 DBS）: label_str: DBS 'H','i',0
 - 代码:
-    LOD R15, label_str ; reg[15] = addr
-    OTS
+  LOD R15, label_str ; reg[15] = addr
+  OTS
 - 汇编会将 label_str 地址放入 constant

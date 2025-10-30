@@ -1,3 +1,2 @@
-- 语法树实现
-- TAC 实现
-- 转成汇编实现
+- global 后置
+- global_label_map 赋值全局符号

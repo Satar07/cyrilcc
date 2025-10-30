@@ -62,7 +62,7 @@ int yywrap() { return 1; }
 [ \t\r\n]
 
 
-[A-Za-z]([A-Za-z]|[0-9])*	{
+[A-Za-z]([A-Za-z]|[0-9]|_)*	{
     DBG_PRINT("IDENTIFIER: %s\n", yytext);
     yylval.str = strdup(yytext);
     return IDENTIFIER;

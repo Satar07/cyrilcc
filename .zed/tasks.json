@@ -25,9 +25,9 @@
     },
     {
         "label": "Run",
-        "command": "./cyrilcc",
-        "args": ["arg1", "arg2"],
-        "cwd": "${ZED_WORKTREE_ROOT}/build"
+        "command": "./build/cyrilcc",
+        "args": ["./test/basic/all.m"],
+        "cwd": "${ZED_WORKTREE_ROOT}"
     },
     {
         "label": "Clean",

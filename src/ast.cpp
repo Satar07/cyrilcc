@@ -2,7 +2,6 @@
 #include <iostream>
 #include <memory>
 #include <ostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -206,8 +205,6 @@ void FunctionCallNode::print(std::ostream &os, int indent) const {
 // 顶层
 void ast_setup_program(ASTNode_List *list) {
     root = std::make_unique<ProgramNode>(list);
-    // dbg print
-    root.get()->print(std::cout);
 }
 
 // 列表操作
