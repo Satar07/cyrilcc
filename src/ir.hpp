@@ -107,11 +107,20 @@ struct IRFunction {
 struct IRGlobalVar {
     std::string name;
     IRType type;
-    std::string initializer_str; // 字符串字面量
+    std::string initializer_str;  // 字符串字面量
+    int initializer_val = 0;      // 常量初始化
+    bool has_initializer = false; // 是否有显式初始化
 
-    IRGlobalVar(std::string n, IRType t) : name(std::move(n)), type(t) {}
+    // 默认构造函数
+    IRGlobalVar(std::string n, IRType t) : name(std::move(n)), type(t), has_initializer(false) {}
+
+    // 用于 int/char 初始化的构造函数
+    IRGlobalVar(std::string n, IRType t, int init_val)
+        : name(std::move(n)), type(t), initializer_val(init_val), has_initializer(true) {}
+
+    // 用于字符串初始化的构造函数
     IRGlobalVar(std::string n, IRType t, std::string init)
-        : name(std::move(n)), type(t), initializer_str(std::move(init)) {}
+        : name(std::move(n)), type(t), initializer_str(std::move(init)), has_initializer(true) {}
 };
 
 // --- 模块 ---

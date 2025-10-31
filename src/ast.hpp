@@ -90,8 +90,10 @@ class ParameterDeclarationNode : public ASTNode {
 class VariableDefinitionNode : public ASTNode {
   public:
     std::string name;
+    std::unique_ptr<ASTNode> initializer; // 初始化表达式 (nullptr 表示没有)
 
-    VariableDefinitionNode(const char *name) : name(name) {}
+    VariableDefinitionNode(const char *name, ASTNode *init = nullptr)
+        : name(name), initializer(init) {}
     void print(std::ostream &os, int indent = 0) const override;
 };
 
@@ -316,7 +318,7 @@ ASTNode *ast_create_type_char();
 ASTNode *
 ast_create_definition_function(ASTNode *type, char *name, ASTNode_List *params, ASTNode_List *body);
 ASTNode *ast_create_declaration_parameter(ASTNode *type, char *name);
-ASTNode *ast_create_definition_variable(char *name);
+ASTNode *ast_create_definition_variable(char *name, ASTNode *initializer);
 ASTNode *ast_create_definition_variable_list(ASTNode *type, ASTNode_List *vars);
 
 // 语句

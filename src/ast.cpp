@@ -87,6 +87,11 @@ void ParameterDeclarationNode::print(std::ostream &os, int indent) const {
 void VariableDefinitionNode::print(std::ostream &os, int indent) const {
     print_indent(os, indent);
     os << "Define var: " << name << std::endl;
+    if (initializer) {
+        print_indent(os, indent + 1);
+        os << "Initializer:" << std::endl;
+        initializer->print(os, indent + 2);
+    }
 }
 
 void VariableDeclarationListNode::print(std::ostream &os, int indent) const {
@@ -303,8 +308,8 @@ ASTNode *ast_create_declaration_parameter(ASTNode *type, char *name) {
     delete type;
     return new ParameterDeclarationNode(t, name);
 }
-ASTNode *ast_create_definition_variable(char *name) {
-    return new VariableDefinitionNode(name);
+ASTNode *ast_create_definition_variable(char *name, ASTNode *initializer) {
+    return new VariableDefinitionNode(name, initializer);
 }
 ASTNode *ast_create_definition_variable_list(ASTNode *type, ASTNode_List *vars) {
     return new VariableDeclarationListNode(type, vars);

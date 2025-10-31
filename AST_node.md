@@ -12,6 +12,7 @@
         - OutputStatementNode
         - IfStatementNode
         - WhileStatementNode
+        - ForStatementNode
         - SwitchStatementNode
         - CaseStatementNode
         - DefaultStatementNode

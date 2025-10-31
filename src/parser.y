@@ -68,7 +68,8 @@ void yyerror(const char* msg) {
 %type <node_list> function_parameter_declaration_list optional_function_parameter_declaration_list
 
 /* 变量定义 */
-%type <node_list> var_definition_list
+%type <node_list> var_definition_list_inner
+%type <node> var_definition_single
 %type <node> var_definition
 
 /* 语句块 */
@@ -111,7 +112,7 @@ definition_list: definition {
 }
 ;
 
-definition: var_definition { $$ = $1; }
+definition: var_definition ';' { $$ = $1; }
 | function_definition { $$ = $1; }
 ;
 
@@ -160,16 +161,24 @@ function_parameter_declaration: optional_type_specifier IDENTIFIER {
 ;
 
 /* 变量定义 */
-var_definition_list: IDENTIFIER {
-    $$ = ast_list_create(ast_create_definition_variable($1));
-}
-| var_definition_list ',' IDENTIFIER {
-    $$ = ast_list_append($1, ast_create_definition_variable($3));
+var_definition: type_specifier var_definition_list_inner {
+    $$ = ast_create_definition_variable_list($1, $2);
 }
 ;
 
-var_definition: type_specifier var_definition_list ';' {
-    $$ = ast_create_definition_variable_list($1, $2);
+var_definition_list_inner: var_definition_single {
+    $$ = ast_list_create($1);
+}
+| var_definition_list_inner ',' var_definition_single {
+    $$ = ast_list_append($1, $3);
+}
+;
+
+var_definition_single: IDENTIFIER {
+    $$ = ast_create_definition_variable($1, nullptr);
+}
+| IDENTIFIER '=' expression {
+    $$ = ast_create_definition_variable($1, $3);
 }
 ;
 
@@ -183,7 +192,7 @@ block_item_list: block_item {
 }
 ;
 
-block_item: var_definition {
+block_item: var_definition ';' {
     $$ = $1;
 }
 | statement {
@@ -247,7 +256,10 @@ while_statement: WHILE '(' expression ')' '{' block_item_list '}' {
 }
 ;
 
-for_statement: FOR '(' optional_expression ';' optional_expression ';' optional_expression ')' '{' block_item_list '}' {
+for_statement: FOR '(' var_definition ';' optional_expression ';' optional_expression ')' '{' block_item_list '}' {
+    $$ = ast_create_statement_for($3, $5, $7, $10);
+}
+| FOR '(' optional_expression ';' optional_expression ';' optional_expression ')' '{' block_item_list '}' {
     $$ = ast_create_statement_for($3, $5, $7, $10);
 }
 ;

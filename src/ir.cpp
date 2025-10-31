@@ -98,7 +98,28 @@ void IRGenerator::visit(ProgramNode *node) {
                 auto var_def = static_cast<VariableDefinitionNode *>(var.get());
                 std::string global_name = "@" + var_def->name;
 
-                module.global_vars.emplace_back(global_name, type);
+                // 处理全局变量初始化
+                if (var_def->initializer) {
+                    // 全局变量的初始化必须是常量。
+                    // 我们这里做一个简化，只支持立即数（int, char）。
+                    if (auto int_lit =
+                            dynamic_cast<IntegerLiteralNode *>(var_def->initializer.get())) {
+                        module.global_vars.emplace_back(global_name, type, int_lit->value);
+                    } else if (auto char_lit = dynamic_cast<CharacterLiteralNode *>(
+                                   var_def->initializer.get())) {
+                        module.global_vars.emplace_back(global_name, type, (int)char_lit->value);
+                    } else if ( // TODO
+                        auto _ = dynamic_cast<StringLiteralNode *>(var_def->initializer.get())) {
+                        throw std::runtime_error("Global string initialization not supported yet");
+                    } else {
+                        throw std::runtime_error(
+                            "Global variable initializer must be a constant literal (int/char)");
+                    }
+                } else {
+                    // 没有初始化 (默认为 0)
+                    module.global_vars.emplace_back(global_name, type, 0);
+                }
+
                 // 全局变量在符号表中也是一个指针
                 module.symbol_table[var_def->name] = IROperand(global_name, IRType::PTR, type);
             }
@@ -175,6 +196,12 @@ void IRGenerator::visit(VariableDeclarationListNode *node) {
 
         // 2. 将变量指针存入局部符号表
         current_function->symbol_table[var_def->name] = var_ptr;
+
+        // 3. 处理初始化
+        if (var_def->initializer) {
+            IROperand init_value = dispatch_expr(var_def->initializer.get());
+            emit(IRInstruction(IROp::STORE, { init_value, var_ptr }));
+        }
     }
 }
 
@@ -506,7 +533,7 @@ void IRGenerator::visit(ForStatementNode *node) {
 
     // 3. 'Initialization' 块 (只执行一次)
     if (node->initialization) {
-        dispatch_expr(node->initialization.get());
+        dispatch(node->initialization.get());
     }
     // 无条件跳转到 'Cond' 块
     emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
