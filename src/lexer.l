@@ -21,6 +21,7 @@ int yywrap() { return 1; }
 "if" { return IF; }
 "else" { return ELSE; }
 "while" { return WHILE; }
+"for" { return FOR; }
 "return" { return RETURN; }
 "continue" { return CONTINUE; }
 "break" { return BREAK; }

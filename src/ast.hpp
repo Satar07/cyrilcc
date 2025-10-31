@@ -152,6 +152,19 @@ class WhileStatementNode : public StatementNode {
     void print(std::ostream &os, int indent = 0) const override;
 };
 
+// for 语句
+class ForStatementNode : public StatementNode {
+  public:
+    std::unique_ptr<ASTNode> initialization; // 初始化表达式
+    std::unique_ptr<ASTNode> condition;      // 条件表达式
+    std::unique_ptr<ASTNode> increment;      // 增量表达式
+    std::unique_ptr<ASTNode_List> body;      // 循环体语句块
+
+    ForStatementNode(ASTNode *init, ASTNode *cond, ASTNode *inc, ASTNode_List *body)
+        : initialization(init), condition(cond), increment(inc), body(body) {}
+    void print(std::ostream &os, int indent = 0) const override;
+};
+
 // switch 语句
 class SwitchStatementNode : public StatementNode {
   public:
@@ -313,6 +326,7 @@ ASTNode *ast_create_statement_if(ASTNode *cond, ASTNode_List *body);
 ASTNode *
 ast_create_statement_if_else(ASTNode *cond, ASTNode_List *if_body, ASTNode_List *else_body);
 ASTNode *ast_create_statement_while(ASTNode *cond, ASTNode_List *body);
+ASTNode *ast_create_statement_for(ASTNode *init, ASTNode *cond, ASTNode *inc, ASTNode_List *body);
 ASTNode *ast_create_statement_switch(ASTNode *cond, ASTNode_List *body);
 ASTNode *ast_create_statement_case(int cond);
 ASTNode *ast_create_statement_case(char cond); // 字符 case? 也许可行

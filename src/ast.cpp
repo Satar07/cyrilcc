@@ -140,6 +140,36 @@ void WhileStatementNode::print(std::ostream &os, int indent) const {
     print_node_list(os, body.get(), indent + 2);
 }
 
+void ForStatementNode::print(std::ostream &os, int indent) const {
+    print_indent(os, indent);
+    os << "For:" << std::endl;
+
+    print_indent(os, indent + 1);
+    os << "Initialization:" << std::endl;
+    if (initialization)
+        initialization->print(os, indent + 2);
+    else
+        print_indent(os, indent + 2), os << "(empty)" << std::endl;
+
+    print_indent(os, indent + 1);
+    os << "Condition:" << std::endl;
+    if (condition)
+        condition->print(os, indent + 2);
+    else
+        print_indent(os, indent + 2), os << "(empty)" << std::endl;
+
+    print_indent(os, indent + 1);
+    os << "Increment:" << std::endl;
+    if (increment)
+        increment->print(os, indent + 2);
+    else
+        print_indent(os, indent + 2), os << "(empty)" << std::endl;
+
+    print_indent(os, indent + 1);
+    os << "Body:" << std::endl;
+    print_node_list(os, body.get(), indent + 2);
+}
+
 void SwitchStatementNode::print(std::ostream &os, int indent) const {
     print_indent(os, indent);
     os << "Switch:" << std::endl;
@@ -296,6 +326,9 @@ ast_create_statement_if_else(ASTNode *cond, ASTNode_List *if_body, ASTNode_List 
 }
 ASTNode *ast_create_statement_while(ASTNode *cond, ASTNode_List *body) {
     return new WhileStatementNode(cond, body);
+}
+ASTNode *ast_create_statement_for(ASTNode *init, ASTNode *cond, ASTNode *inc, ASTNode_List *body) {
+    return new ForStatementNode(init, cond, inc, body);
 }
 ASTNode *ast_create_statement_switch(ASTNode *cond, ASTNode_List *body) {
     return new SwitchStatementNode(cond, body);

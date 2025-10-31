@@ -491,6 +491,60 @@ void IRGenerator::visit(WhileStatementNode *node) {
     loop_switch_end_labels.pop_back();
 }
 
+void IRGenerator::visit(ForStatementNode *node) {
+    // 1. 创建标签
+    std::string cond_label = new_label_name();
+    std::string body_label = new_label_name();
+    std::string inc_label = new_label_name();
+    std::string end_label = new_label_name();
+
+    // 2. 注册 break/continue 标签
+    // continue 跳转到 inc_label
+    loop_start_labels.push_back(inc_label);
+    // break 跳转到 end_label
+    loop_switch_end_labels.push_back(end_label);
+
+    // 3. 'Initialization' 块 (只执行一次)
+    if (node->initialization) {
+        dispatch_expr(node->initialization.get());
+    }
+    // 无条件跳转到 'Cond' 块
+    emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
+
+    // 4. 'Cond' 块
+    create_block_and_set(cond_label);
+    if (node->condition) {
+        // 有条件
+        visit_condition(node->condition.get(), body_label, end_label);
+    } else {
+        // 没有条件 (无限循环, e.g., for(;;))
+        emit(IRInstruction(IROp::BR, { IROperand(body_label, IRType::LABEL) }));
+    }
+
+    // 5. 'Body' 块
+    create_block_and_set(body_label);
+    for (const auto &stmt : node->body->nodes) {
+        dispatch(stmt.get());
+    }
+    // 'Body' 块结束后无条件跳转到 'Increment'
+    emit(IRInstruction(IROp::BR, { IROperand(inc_label, IRType::LABEL) }));
+
+    // 6. 'Increment' 块
+    create_block_and_set(inc_label);
+    if (node->increment) {
+        dispatch_expr(node->increment.get());
+    }
+    // 'Increment' 块结束后无条件跳转回 'Cond'
+    emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
+
+    // 7. 'End' 块
+    create_block_and_set(end_label);
+
+    // 8. 移除 break/continue 标签
+    loop_start_labels.pop_back();
+    loop_switch_end_labels.pop_back();
+}
+
 void IRGenerator::visit(SwitchStatementNode *node) {
     // 1. 创建结束标签并注册
     auto end_label = new_label_name();

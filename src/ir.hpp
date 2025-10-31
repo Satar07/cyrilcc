@@ -139,6 +139,7 @@ class ASTVisitor {
     // 语句
     virtual void visit(IfStatementNode *node) = 0;
     virtual void visit(WhileStatementNode *node) = 0;
+    virtual void visit(ForStatementNode *node) = 0;
     virtual void visit(SwitchStatementNode *node) = 0;
     virtual void visit(CaseBlockStatementNode *node) = 0;
     virtual void visit(ReturnStatementNode *node) = 0;
@@ -177,6 +178,8 @@ class ASTVisitor {
         } else if (auto n = dynamic_cast<IfStatementNode *>(node)) {
             visit(n);
         } else if (auto n = dynamic_cast<WhileStatementNode *>(node)) {
+            visit(n);
+        } else if (auto n = dynamic_cast<ForStatementNode *>(node)) {
             visit(n);
         } else if (auto n = dynamic_cast<SwitchStatementNode *>(node)) {
             visit(n);
@@ -247,6 +250,7 @@ class IRGenerator : public ASTVisitor {
     void visit(VariableDeclarationListNode *node) override;
     void visit(IfStatementNode *node) override;
     void visit(WhileStatementNode *node) override;
+    void visit(ForStatementNode *node) override;
     void visit(SwitchStatementNode *node) override;
     void visit(CaseBlockStatementNode *) override {}
     void visit(ReturnStatementNode *node) override;

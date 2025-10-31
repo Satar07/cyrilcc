@@ -25,6 +25,8 @@ void yyerror(const char* msg) {
 %code {
 }
 
+%expect 16
+
 %union {
     int num;
     char* str;
@@ -49,7 +51,7 @@ void yyerror(const char* msg) {
 %token INT CHAR
 
 /* 关键字 控制流 */
-%token IF ELSE WHILE SWITCH CASE DEFAULT
+%token IF ELSE WHILE FOR SWITCH CASE DEFAULT
 %token INPUT OUTPUT
 %token CONTINUE BREAK RETURN
 
@@ -76,13 +78,13 @@ void yyerror(const char* msg) {
 /* 语句 */
 %type <node> statement
 %type <node> input_statement output_statement
-%type <node> if_statement while_statement
+%type <node> if_statement while_statement for_statement
 %type <node> switch_statement case_statement
 %type <node_list> case_statement_list
 %type <node> return_statement break_statement continue_statement
 
 /* 表达式 */
-%type <node> expression
+%type <node> expression optional_expression
 %type <node> assignment comparison calculation immediate
 
 /* 变量调用 */
@@ -205,6 +207,9 @@ statement: expression ';' {
 | while_statement {
     $$ = $1;
 }
+| for_statement {
+    $$ = $1;
+}
 | switch_statement {
     $$ = $1;
 }
@@ -242,6 +247,11 @@ while_statement: WHILE '(' expression ')' '{' block_item_list '}' {
 }
 ;
 
+for_statement: FOR '(' optional_expression ';' optional_expression ';' optional_expression ')' '{' block_item_list '}' {
+    $$ = ast_create_statement_for($3, $5, $7, $10);
+}
+;
+
 return_statement: RETURN expression {
     $$ = ast_create_statement_return($2);
 }
@@ -270,6 +280,7 @@ case_statement : CASE INTEGER ':'  {
     $$ = ast_create_statement_default();
 }
 | block_item_list {
+    // 这里会产生SR警告，是正常的，因为没有大括号，不知道是否需要移入还是结束这个list，默认移入是对的
     $$ = ast_create_statement_case_block($1);
 }
 | '{' block_item_list '}' {
@@ -288,6 +299,11 @@ continue_statement: CONTINUE {
 ;
 
 /* 表达式 */
+optional_expression: { $$ = nullptr; }
+| expression { $$ = $1; }
+;
+
+
 expression: assignment { $$ = $1; }
 | comparison { $$ = $1; }
 | calculation { $$ = $1; }

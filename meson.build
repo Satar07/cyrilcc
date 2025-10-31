@@ -15,7 +15,7 @@ gen_bison = generator(
     bison_prog,
     output: ['@BASENAME@.cpp', '@BASENAME@.h'],
     arguments: [
-        '-Wcounterexamples',
+        # '-Wcounterexamples',
         '-d',
         '-o', '@OUTPUT0@',
         '--defines=@OUTPUT1@',
