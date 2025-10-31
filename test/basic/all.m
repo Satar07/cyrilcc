@@ -1,25 +1,16 @@
-int globalint;
-char globalchar;
-
 main(){
-    int localint;
-    char localchar;
-    input localint;
-    localchar = 'c';
-    if(localint == 1){
-        localchar = 'd';
+    int a;
+    a=3;
+    switch(a){
+        case 1:
+            a = a + 1;
+            break;
+        default:{
+            a = 0;
+        }
+        case 2:
+            a = a + 2;
+            break;
     }
-    while(localint > 1){
-        localchar = 'e';
-        break;
-    }
-    localint = max( localint, 3) + 123;
-    output localchar;
-    globalint = localint;
-    globalchar = localchar;
-}
-
-max(a, b){
-    if(a<b) {return b;}
-    else {return a;}
+    output a;
 }

@@ -1,5 +1,6 @@
 #include "ir.hpp"
 #include "ast.hpp" // 确保包含了 ast.hpp
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -41,7 +42,8 @@ void IRGenerator::end_function() {
     current_block = nullptr;
 }
 
-IRBasicBlock *IRGenerator::create_block(std::string name) {
+// 创建一个新的基本块，后根据可选名称创建标签，设置当前块为此块
+IRBasicBlock *IRGenerator::create_block_and_set(std::string name) {
     if (name.empty()) {
         name = new_label_name();
     }
@@ -50,11 +52,7 @@ IRBasicBlock *IRGenerator::create_block(std::string name) {
     // 插入 LABEL 伪指令
     current_function->blocks.back().instructions.push_back(
         IRInstruction(IROp::LABEL, { IROperand(name, IRType::LABEL) }));
-    return &current_function->blocks.back();
-}
-
-void IRGenerator::set_current_block(IRBasicBlock *block) {
-    current_block = block;
+    return current_block = &current_function->blocks.back();
 }
 
 void IRGenerator::emit(IRInstruction instruction) {
@@ -122,8 +120,7 @@ void IRGenerator::visit(FunctionDefinitionNode *node) {
     start_function(func_name, ret_type);
 
     // 创建入口块
-    IRBasicBlock *entry_block = create_block();
-    set_current_block(entry_block);
+    create_block_and_set();
 
     // --- 处理参数 (alloca/store) ---
     for (const auto &param : node->params->nodes) {
@@ -369,7 +366,7 @@ void IRGenerator::visit(OutputStatementNode *node) {
 
 // --- 控制流 ---
 
-// [核心] 处理 if/while 的条件
+// 处理 if/while 的条件
 void IRGenerator::visit_condition(ASTNode *cond, const std::string &true_label,
                                   const std::string &false_label) {
 
@@ -422,7 +419,7 @@ void IRGenerator::visit_condition(ASTNode *cond, const std::string &true_label,
     }
 
     // 另一个分支
-    set_current_block(create_block());
+    create_block_and_set();
     if (need_revert) {
         emit(IRInstruction(IROp::BR, { true_target }));
     } else {
@@ -440,7 +437,7 @@ void IRGenerator::visit(IfStatementNode *node) {
     visit_condition(node->condition.get(), then_label, else_label);
 
     // 3. 'Then' 块
-    set_current_block(create_block(then_label));
+    create_block_and_set(then_label);
     for (const auto &stmt : node->then_branch->nodes) {
         dispatch(stmt.get());
     }
@@ -449,7 +446,7 @@ void IRGenerator::visit(IfStatementNode *node) {
 
     // 4. 'Else' 块 (如果存在)
     if (node->else_branch) {
-        set_current_block(create_block(else_label));
+        create_block_and_set(else_label);
         for (const auto &stmt : node->else_branch->nodes) {
             dispatch(stmt.get());
         }
@@ -458,7 +455,7 @@ void IRGenerator::visit(IfStatementNode *node) {
     }
 
     // 5. 'End' 块
-    set_current_block(create_block(end_label));
+    create_block_and_set(end_label);
 }
 
 void IRGenerator::visit(WhileStatementNode *node) {
@@ -469,17 +466,17 @@ void IRGenerator::visit(WhileStatementNode *node) {
 
     // 2. 注册 break/continue 标签
     loop_start_labels.push_back(cond_label);
-    loop_end_labels.push_back(end_label);
+    loop_switch_end_labels.push_back(end_label);
 
     // 3. 无条件跳转到 'Cond' 块
     emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
 
     // 4. 'Cond' 块
-    set_current_block(create_block(cond_label));
+    create_block_and_set(cond_label);
     visit_condition(node->condition.get(), body_label, end_label);
 
     // 5. 'Body' 块
-    set_current_block(create_block(body_label));
+    create_block_and_set(body_label);
     for (const auto &stmt : node->body->nodes) {
         dispatch(stmt.get());
     }
@@ -487,18 +484,94 @@ void IRGenerator::visit(WhileStatementNode *node) {
     emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
 
     // 6. 'End' 块
-    set_current_block(create_block(end_label));
+    create_block_and_set(end_label);
 
     // 7. 移除 break/continue 标签
     loop_start_labels.pop_back();
-    loop_end_labels.pop_back();
+    loop_switch_end_labels.pop_back();
+}
+
+void IRGenerator::visit(SwitchStatementNode *node) {
+    // 1. 创建结束标签并注册
+    auto end_label = new_label_name();
+    loop_switch_end_labels.push_back(end_label);
+
+    // 2. 访问 switch 条件表达式
+    IROperand switch_val = dispatch_expr(node->condition.get());
+
+    // 3. 预先遍历 case 块，创建标签并生成比较跳转
+    int block_cnt = 0;
+    auto case_label_map = std::map<int, int>{}; // case value -> label index
+    auto case_block_arr = std::vector<std::string>{};
+    int default_block_index = -1;
+
+    for (const auto &stmt : node->body.get()->nodes) {
+        if (auto cast_stmt = dynamic_cast<CaseStatementNode *>(stmt.get())) {
+            case_label_map.insert({ cast_stmt->case_value, block_cnt }); // 跳转到最近的
+        }
+        if (const auto &block_stmt = dynamic_cast<CaseBlockStatementNode *>(stmt.get())) {
+            block_cnt++;
+            case_block_arr.push_back(new_label_name());
+        }
+        if (const auto &default_stmt = dynamic_cast<DefaultStatementNode *>(stmt.get()) and
+                                       default_block_index == -1) {
+            default_block_index = block_cnt;
+        }
+    }
+
+    // 4. 生成比较跳转
+    bool first_case = true;
+
+    auto create_block_when_not_fir = [&]() {
+        if (first_case) {
+            first_case = false;
+        } else {
+            create_block_and_set();
+        }
+    };
+    for (const auto &[case_value, label_index] : case_label_map) {
+        create_block_when_not_fir();
+        // 生成 TEST 指令
+        IROperand case_const = IROperand(case_value, IRType::I32);
+        emit(IRInstruction(IROp::TEST, { switch_val, case_const }));
+        // 生成 BRZ 指令跳转到对应 case 块
+        emit(IRInstruction(IROp::BRZ, { IROperand(case_block_arr[label_index], IRType::LABEL) }));
+    }
+    if (default_block_index != -1) {
+        create_block_when_not_fir();
+        // 跳转到 default 块
+        emit(IRInstruction(IROp::BR,
+                           { IROperand(case_block_arr[default_block_index], IRType::LABEL) }));
+    } else {
+        create_block_when_not_fir();
+        // 没有匹配的 case，也没有 default，跳转到 end
+        emit(IRInstruction(IROp::BR, { IROperand(end_label, IRType::LABEL) }));
+    }
+
+    // 5. case 实际执行块
+    auto now_block_cnt = 0;
+    for (const auto &stmt : node->body.get()->nodes) {
+        if (const auto &block_stmt = dynamic_cast<CaseBlockStatementNode *>(stmt.get())) {
+            // 进入对应的 case 块
+            create_block_and_set(case_block_arr[now_block_cnt]);
+            for (const auto &inner_stmt : block_stmt->body.get()->nodes) {
+                dispatch(inner_stmt.get());
+            }
+            now_block_cnt++;
+        }
+    }
+
+    // 6. 'End' 块
+    create_block_and_set(end_label);
+    // 7. 移除 switch 结束标签
+    loop_switch_end_labels.pop_back();
 }
 
 void IRGenerator::visit(BreakStatementNode *) {
-    if (loop_end_labels.empty()) {
+    if (loop_switch_end_labels.empty()) {
         throw std::runtime_error("Break statement outside of loop");
     }
-    emit(IRInstruction(IROp::BR, { IROperand(loop_end_labels.back(), IRType::LABEL) }));
+    emit(IRInstruction(IROp::BR, { IROperand(loop_switch_end_labels.back(), IRType::LABEL) }));
 }
 
 void IRGenerator::visit(ContinueStatementNode *) {

@@ -140,6 +140,35 @@ void WhileStatementNode::print(std::ostream &os, int indent) const {
     print_node_list(os, body.get(), indent + 2);
 }
 
+void SwitchStatementNode::print(std::ostream &os, int indent) const {
+    print_indent(os, indent);
+    os << "Switch:" << std::endl;
+
+    print_indent(os, indent + 1);
+    os << "Condition:" << std::endl;
+    condition->print(os, indent + 2);
+
+    print_indent(os, indent + 1);
+    os << "Body:" << std::endl;
+    print_node_list(os, body.get(), indent + 2);
+}
+
+void CaseStatementNode::print(std::ostream &os, int indent) const {
+    print_indent(os, indent);
+    os << "Case: " << case_value << std::endl;
+}
+
+void DefaultStatementNode::print(std::ostream &os, int indent) const {
+    print_indent(os, indent);
+    os << "Default" << std::endl;
+}
+
+void CaseBlockStatementNode::print(std::ostream &os, int indent) const {
+    print_indent(os, indent);
+    os << "CaseBlock:" << std::endl;
+    print_node_list(os, body.get(), indent + 1);
+}
+
 void ReturnStatementNode::print(std::ostream &os, int indent) const {
     print_indent(os, indent);
     os << "Return:" << std::endl;
@@ -267,6 +296,21 @@ ast_create_statement_if_else(ASTNode *cond, ASTNode_List *if_body, ASTNode_List 
 }
 ASTNode *ast_create_statement_while(ASTNode *cond, ASTNode_List *body) {
     return new WhileStatementNode(cond, body);
+}
+ASTNode *ast_create_statement_switch(ASTNode *cond, ASTNode_List *body) {
+    return new SwitchStatementNode(cond, body);
+}
+ASTNode *ast_create_statement_case(int cond) {
+    return new CaseStatementNode(cond);
+}
+ASTNode *ast_create_statement_case(char cond) {
+    return new CaseStatementNode(static_cast<int>(cond));
+}
+ASTNode *ast_create_statement_default() {
+    return new DefaultStatementNode();
+}
+ASTNode *ast_create_statement_case_block(ASTNode_List *body) {
+    return new CaseBlockStatementNode(body);
 }
 ASTNode *ast_create_statement_return(ASTNode *expr) {
     return new ReturnStatementNode(expr);

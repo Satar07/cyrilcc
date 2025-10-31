@@ -1,2 +1,4 @@
-- global 后置
-- global_label_map 赋值全局符号
+- for
+- `* &`
+- array
+- struct

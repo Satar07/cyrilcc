@@ -49,7 +49,7 @@ void yyerror(const char* msg) {
 %token INT CHAR
 
 /* 关键字 控制流 */
-%token IF ELSE WHILE
+%token IF ELSE WHILE SWITCH CASE DEFAULT
 %token INPUT OUTPUT
 %token CONTINUE BREAK RETURN
 
@@ -77,6 +77,8 @@ void yyerror(const char* msg) {
 %type <node> statement
 %type <node> input_statement output_statement
 %type <node> if_statement while_statement
+%type <node> switch_statement case_statement
+%type <node_list> case_statement_list
 %type <node> return_statement break_statement continue_statement
 
 /* 表达式 */
@@ -203,6 +205,9 @@ statement: expression ';' {
 | while_statement {
     $$ = $1;
 }
+| switch_statement {
+    $$ = $1;
+}
 | return_statement ';' {
     $$ = $1;
 }
@@ -239,6 +244,36 @@ while_statement: WHILE '(' expression ')' '{' block_item_list '}' {
 
 return_statement: RETURN expression {
     $$ = ast_create_statement_return($2);
+}
+;
+
+switch_statement : SWITCH '(' expression ')' '{' case_statement_list '}' {
+    $$ = ast_create_statement_switch($3, $6);
+}
+;
+
+case_statement_list : {
+    $$ = ast_list_create_empty();
+}
+| case_statement_list case_statement {
+    $$ = ast_list_append($1, $2);
+}
+;
+
+case_statement : CASE INTEGER ':'  {
+    $$ = ast_create_statement_case($2);
+}
+| CASE CHARACTER ':' {
+    $$ = ast_create_statement_case($2);
+}
+| DEFAULT ':' {
+    $$ = ast_create_statement_default();
+}
+| block_item_list {
+    $$ = ast_create_statement_case_block($1);
+}
+| '{' block_item_list '}' {
+    $$ = ast_create_statement_case_block($2);
 }
 ;
 

@@ -39,7 +39,6 @@ inc_dirs = include_directories('src', '.')
 executable(
     'cyrilcc',
     'src/main.cpp',
-    'src/symbol.cpp',
     'src/ast.cpp',
     'src/ir.cpp',
     'src/ir_dumper.cpp',

@@ -139,6 +139,8 @@ class ASTVisitor {
     // 语句
     virtual void visit(IfStatementNode *node) = 0;
     virtual void visit(WhileStatementNode *node) = 0;
+    virtual void visit(SwitchStatementNode *node) = 0;
+    virtual void visit(CaseBlockStatementNode *node) = 0;
     virtual void visit(ReturnStatementNode *node) = 0;
     virtual void visit(InputStatementNode *node) = 0;
     virtual void visit(OutputStatementNode *node) = 0;
@@ -175,6 +177,10 @@ class ASTVisitor {
         } else if (auto n = dynamic_cast<IfStatementNode *>(node)) {
             visit(n);
         } else if (auto n = dynamic_cast<WhileStatementNode *>(node)) {
+            visit(n);
+        } else if (auto n = dynamic_cast<SwitchStatementNode *>(node)) {
+            visit(n);
+        } else if (auto n = dynamic_cast<CaseBlockStatementNode *>(node)) {
             visit(n);
         } else if (auto n = dynamic_cast<ReturnStatementNode *>(node)) {
             visit(n);
@@ -241,6 +247,8 @@ class IRGenerator : public ASTVisitor {
     void visit(VariableDeclarationListNode *node) override;
     void visit(IfStatementNode *node) override;
     void visit(WhileStatementNode *node) override;
+    void visit(SwitchStatementNode *node) override;
+    void visit(CaseBlockStatementNode *) override {}
     void visit(ReturnStatementNode *node) override;
     void visit(InputStatementNode *node) override;
     void visit(OutputStatementNode *node) override;
@@ -268,7 +276,7 @@ class IRGenerator : public ASTVisitor {
 
     // 用于 break/continue 的标签栈
     std::vector<std::string> loop_start_labels;
-    std::vector<std::string> loop_end_labels;
+    std::vector<std::string> loop_switch_end_labels;
 
     // --- 辅助方法 ---
     IRType convert_ast_type(TypeKind type);
@@ -278,8 +286,7 @@ class IRGenerator : public ASTVisitor {
 
     void start_function(std::string name, IRType ret_type);
     void end_function();
-    IRBasicBlock *create_block(std::string name = "");
-    void set_current_block(IRBasicBlock *block);
+    IRBasicBlock *create_block_and_set(std::string name = "");
 
     void emit(IRInstruction instruction);
 

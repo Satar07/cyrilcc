@@ -24,10 +24,13 @@ int yywrap() { return 1; }
 "return" { return RETURN; }
 "continue" { return CONTINUE; }
 "break" { return BREAK; }
-"int" { return INT;}
-"char" { return CHAR;}
-"input" { return INPUT;}
-"output" { return OUTPUT;}
+"int" { return INT; }
+"char" { return CHAR; }
+"input" { return INPUT; }
+"output" { return OUTPUT; }
+"switch" { return SWITCH; }
+"case" { return CASE; }
+"default" { return DEFAULT; }
 
 "+"|"-"|"*"|"/"|"("|")"|"<"|">"|"{"|"}"|";"|"="|","|":"|"["|"]"|"."|"&"|"*" {
     DBG_PRINT("SYMBOL: %s\n", yytext);

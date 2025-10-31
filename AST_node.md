@@ -12,6 +12,10 @@
         - OutputStatementNode
         - IfStatementNode
         - WhileStatementNode
+        - SwitchStatementNode
+        - CaseStatementNode
+        - DefaultStatementNode
+        - CaseBlockStatementNode case语句块
         - ReturnStatementNode
         - BreakStatementNode
         - ContinueStatementNode

@@ -152,6 +152,41 @@ class WhileStatementNode : public StatementNode {
     void print(std::ostream &os, int indent = 0) const override;
 };
 
+// switch 语句
+class SwitchStatementNode : public StatementNode {
+  public:
+    std::unique_ptr<ASTNode> condition; // 条件表达式
+    std::unique_ptr<ASTNode_List> body; // switch 语句块
+
+    SwitchStatementNode(ASTNode *condition, ASTNode_List *body)
+        : condition(condition), body(body) {}
+    void print(std::ostream &os, int indent = 0) const override;
+};
+
+// case 语句
+class CaseStatementNode : public StatementNode {
+  public:
+    int case_value;
+
+    CaseStatementNode(int value) : case_value(value) {}
+    void print(std::ostream &os, int indent = 0) const override;
+};
+
+// default 语句
+class DefaultStatementNode : public StatementNode {
+  public:
+    void print(std::ostream &os, int indent = 0) const override;
+};
+
+// case 语句块
+class CaseBlockStatementNode : public StatementNode {
+  public:
+    std::unique_ptr<ASTNode_List> body; // case 语句块
+
+    CaseBlockStatementNode(ASTNode_List *body) : body(body) {}
+    void print(std::ostream &os, int indent = 0) const override;
+};
+
 // return 语句
 class ReturnStatementNode : public StatementNode {
   public:
@@ -278,6 +313,11 @@ ASTNode *ast_create_statement_if(ASTNode *cond, ASTNode_List *body);
 ASTNode *
 ast_create_statement_if_else(ASTNode *cond, ASTNode_List *if_body, ASTNode_List *else_body);
 ASTNode *ast_create_statement_while(ASTNode *cond, ASTNode_List *body);
+ASTNode *ast_create_statement_switch(ASTNode *cond, ASTNode_List *body);
+ASTNode *ast_create_statement_case(int cond);
+ASTNode *ast_create_statement_case(char cond); // 字符 case? 也许可行
+ASTNode *ast_create_statement_default();
+ASTNode *ast_create_statement_case_block(ASTNode_List *body);
 ASTNode *ast_create_statement_return(ASTNode *expr);
 ASTNode *ast_create_statement_break();
 ASTNode *ast_create_statement_continue();
