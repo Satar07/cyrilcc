@@ -134,47 +134,18 @@ struct IRModule {
     void dump(std::ostream &os);
 };
 
-// --- 用于 IR 生成的 AST 访问者 ---
-class ASTVisitor {
+// --- IR 生成器  ---
+class IRGenerator {
   public:
-    virtual ~ASTVisitor() = default;
+    IRModule module;
 
-    // 主入口点
-    virtual void visit(ProgramNode *node) = 0;
+    IRGenerator(std::unique_ptr<ASTNode> &root) {
+        dispatch(root.get());
+    }
 
-    // 定义
-    virtual void visit(FunctionDefinitionNode *node) = 0;
-    virtual void visit(VariableDeclarationListNode *node) = 0;
-
-    // 语句
-    virtual void visit(IfStatementNode *node) = 0;
-    virtual void visit(WhileStatementNode *node) = 0;
-    virtual void visit(ForStatementNode *node) = 0;
-    virtual void visit(SwitchStatementNode *node) = 0;
-    virtual void visit(CaseBlockStatementNode *node) = 0;
-    virtual void visit(ReturnStatementNode *node) = 0;
-    virtual void visit(InputStatementNode *node) = 0;
-    virtual void visit(OutputStatementNode *node) = 0;
-    virtual void visit(BreakStatementNode *node) = 0;
-    virtual void visit(ContinueStatementNode *node) = 0;
-
-    // 表达式 (返回包含结果的操作数)
-    virtual IROperand visit(AssignmentNode *node) = 0;
-    virtual IROperand visit(BinaryOpNode *node) = 0;
-    virtual IROperand visit(IntegerLiteralNode *node) = 0;
-    virtual IROperand visit(CharacterLiteralNode *node) = 0;
-    virtual IROperand visit(StringLiteralNode *node) = 0;
-    virtual IROperand visit(VariableReferenceNode *node) = 0;
-    virtual IROperand visit(FunctionCallNode *node) = 0;
-
-    // 属于其他节点但本身不直接生成代码的节点
-    virtual void visit(TypeSpecifierNode *) {}
-    virtual void visit(ParameterDeclarationNode *) {}
-    virtual void visit(VariableDefinitionNode *) {}
-
-    // -----------------------------------------------------------------
-    // --- 访问者分发逻辑 (修正版) ---
-    // -----------------------------------------------------------------
+    void dump_ir() {
+        module.dump(std::cout);
+    }
 
     // 分发语句
     void dispatch(ASTNode *node) {
@@ -239,23 +210,9 @@ class ASTVisitor {
         }
         throw std::runtime_error("Unknown expression node type in dispatch_expr");
     }
-};
 
-// --- IR 生成器 ---
-class IRGenerator : public ASTVisitor {
-  public:
-    IRModule module;
-
-    IRGenerator(std::unique_ptr<ASTNode> &root) {
-        dispatch(root.get());
-    }
-
-    void dump_ir() {
-        module.dump(std::cout);
-    }
-
-    // Visitor 实现
-    void visit(ProgramNode *node) override {
+  private:
+    void visit(ProgramNode *node) {
         // 第一遍：处理全局变量和函数声明 (为了支持函数调用)
         for (const auto &def : node->definitions->nodes) {
             if (auto func_def = dynamic_cast<FunctionDefinitionNode *>(def.get())) {
@@ -310,7 +267,8 @@ class IRGenerator : public ASTVisitor {
             }
         }
     }
-    void visit(FunctionDefinitionNode *node) override {
+
+    void visit(FunctionDefinitionNode *node) {
         IRType ret_type = convert_ast_type(node->return_type);
         std::string func_name = "@" + node->name;
 
@@ -356,7 +314,8 @@ class IRGenerator : public ASTVisitor {
 
         end_function();
     }
-    void visit(VariableDeclarationListNode *node) override {
+
+    void visit(VariableDeclarationListNode *node) {
         // 注意: 全局变量已在 ProgramNode 中处理。这里只处理局部变量。
         if (!current_function) return;
 
@@ -379,7 +338,8 @@ class IRGenerator : public ASTVisitor {
             }
         }
     }
-    void visit(IfStatementNode *node) override {
+
+    void visit(IfStatementNode *node) {
         // 1. 创建标签
         std::string then_label = new_label_name();
         std::string end_label = new_label_name();
@@ -409,7 +369,8 @@ class IRGenerator : public ASTVisitor {
         // 5. 'End' 块
         create_block_and_set(end_label);
     }
-    void visit(WhileStatementNode *node) override {
+
+    void visit(WhileStatementNode *node) {
         // 1. 创建标签
         std::string cond_label = new_label_name();
         std::string body_label = new_label_name();
@@ -441,7 +402,8 @@ class IRGenerator : public ASTVisitor {
         loop_start_labels.pop_back();
         loop_switch_end_labels.pop_back();
     }
-    void visit(ForStatementNode *node) override {
+
+    void visit(ForStatementNode *node) {
         // 1. 创建标签
         std::string cond_label = new_label_name();
         std::string body_label = new_label_name();
@@ -494,7 +456,8 @@ class IRGenerator : public ASTVisitor {
         loop_start_labels.pop_back();
         loop_switch_end_labels.pop_back();
     }
-    void visit(SwitchStatementNode *node) override {
+
+    void visit(SwitchStatementNode *node) {
         // 1. 创建结束标签并注册
         auto end_label = new_label_name();
         loop_switch_end_labels.push_back(end_label);
@@ -570,12 +533,15 @@ class IRGenerator : public ASTVisitor {
         // 7. 移除 switch 结束标签
         loop_switch_end_labels.pop_back();
     }
-    void visit(CaseBlockStatementNode *) override {}
-    void visit(ReturnStatementNode *node) override {
+
+    void visit(CaseBlockStatementNode *) {}
+
+    void visit(ReturnStatementNode *node) {
         IROperand ret_val = dispatch_expr(node->value.get());
         emit(IRInstruction(IROp::RET, { ret_val }));
     }
-    void visit(InputStatementNode *node) override {
+
+    void visit(InputStatementNode *node) {
         // input(var) -> 1. call input, 2. store result to var
 
         // 1. 获取 var 的指针
@@ -605,7 +571,8 @@ class IRGenerator : public ASTVisitor {
         // 4. STORE 结果
         emit(IRInstruction(IROp::STORE, { result_reg, l_ptr }));
     }
-    void visit(OutputStatementNode *node) override {
+
+    void visit(OutputStatementNode *node) {
         // 1. 访问要输出的表达式
         IROperand val = dispatch_expr(node->var.get());
 
@@ -625,20 +592,22 @@ class IRGenerator : public ASTVisitor {
         // 3. 发出 OUTPUT 指令
         emit(IRInstruction(output_op, { val }));
     }
-    void visit(BreakStatementNode *) override {
+
+    void visit(BreakStatementNode *) {
         if (loop_switch_end_labels.empty()) {
             throw std::runtime_error("Break statement outside of loop");
         }
         emit(IRInstruction(IROp::BR, { IROperand(loop_switch_end_labels.back(), IRType::LABEL) }));
     }
-    void visit(ContinueStatementNode *) override {
+
+    void visit(ContinueStatementNode *) {
         if (loop_start_labels.empty()) {
             throw std::runtime_error("Continue statement outside of loop");
         }
         emit(IRInstruction(IROp::BR, { IROperand(loop_start_labels.back(), IRType::LABEL) }));
     }
 
-    IROperand visit(AssignmentNode *node) override {
+    IROperand visit(AssignmentNode *node) {
         // 1. 访问右侧表达式 (R-value)
         IROperand r_value = dispatch_expr(node->rvalue.get());
 
@@ -656,7 +625,8 @@ class IRGenerator : public ASTVisitor {
         // 赋值表达式本身也返回 R-value
         return r_value;
     }
-    IROperand visit(BinaryOpNode *node) override {
+
+    IROperand visit(BinaryOpNode *node) {
         // 1. 访问左右操作数
         IROperand left_val = dispatch_expr(node->left.get());
         IROperand right_val = dispatch_expr(node->right.get());
@@ -693,13 +663,16 @@ class IRGenerator : public ASTVisitor {
 
         return result_reg;
     }
-    IROperand visit(IntegerLiteralNode *node) override {
+
+    IROperand visit(IntegerLiteralNode *node) {
         return IROperand(node->value, IRType::I32);
     }
-    IROperand visit(CharacterLiteralNode *node) override {
+
+    IROperand visit(CharacterLiteralNode *node) {
         return IROperand(node->value, IRType::I8);
     }
-    IROperand visit(StringLiteralNode *node) override {
+
+    IROperand visit(StringLiteralNode *node) {
         // 查找是否已有该字符串
         auto it = string_literal_map.find(node->value);
         if (it != string_literal_map.end()) {
@@ -715,7 +688,8 @@ class IRGenerator : public ASTVisitor {
 
         return IROperand(str_name, IRType::PTR, IRType::I8);
     }
-    IROperand visit(VariableReferenceNode *node) override {
+
+    IROperand visit(VariableReferenceNode *node) {
         // 访问变量引用 (R-value) -> LOAD
 
         // 1. 找到变量的 *指针*
@@ -727,7 +701,8 @@ class IRGenerator : public ASTVisitor {
 
         return result_reg;
     }
-    IROperand visit(FunctionCallNode *node) override {
+
+    IROperand visit(FunctionCallNode *node) {
         // 1. 查找函数定义
         auto it = module.symbol_table.find(node->name);
         if (it == module.symbol_table.end()) {
