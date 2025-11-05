@@ -127,6 +127,7 @@ class IRType {
         return &t;
     }
 
+    // 持久化的，随便存指针
     static IRType *get_pointer(IRType *base) {
         static std::map<IRType *, std::unique_ptr<IRType>> cache;
         if (auto it = cache.find(base); it != cache.end()) return it->second.get();

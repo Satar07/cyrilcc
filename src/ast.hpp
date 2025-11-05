@@ -122,7 +122,7 @@ class PointerDeclarationNode : public DeclarationNode {
 // --- 函数 ---
 class FunctionNode : public ASTNode {
   public:
-    IRType *return_type; // 最终的返回类型 (e.g., int*)
+    IRType *return_type;
     std::string name;
     std::unique_ptr<ASTNode_List> params;
     std::unique_ptr<ASTNode_List> body;
@@ -171,7 +171,6 @@ class VariableDefinitionNode : public ASTNode {
   public:
     std::string name;
     IRType *type; // 最终的变量类型
-    // (根据约束，移除 initializer)
     VariableDefinitionNode(const std::string &name, IRType *type) : name(name), type(type) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);

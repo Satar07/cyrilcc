@@ -603,7 +603,6 @@ class IRGenerator {
             last_block_terminated = true;
         }
 
-        // 确保有返回
         if (!last_block_terminated) {
             emit(IROp::RET,
                  node->return_type->is_void()
