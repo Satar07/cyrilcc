@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
         root.get()->print(std::cout);
         // 生成 IR
         IRGenerator ir{ root };
-        ir.dump_ir();
+        ir.module.dump(std::cout);
         AsmGenerator asm_gen{ ir.module, std::cout };
         asm_gen.generate();
     }

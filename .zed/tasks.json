@@ -26,7 +26,7 @@
     {
         "label": "Run",
         "command": "./build/cyrilcc",
-        "args": ["./test/basic/all.m"],
+        "args": ["test/testcase/for-bc.m"],
         "cwd": "${ZED_WORKTREE_ROOT}"
     },
     {

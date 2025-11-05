@@ -41,7 +41,6 @@ executable(
     'src/main.cpp',
     'src/ast.cpp',
     'src/ir.cpp',
-    'src/ir_dumper.cpp',
     'src/asm_gen.cpp',
     parser_files,
     lexer_files,

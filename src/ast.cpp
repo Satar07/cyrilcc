@@ -34,10 +34,10 @@ ASTNode_List *ast_list_append(ASTNode_List *list, ASTNode *node) {
 
 // 类型
 IRType *ast_create_type_int() {
-    return IRType::get_int();
+    return IRType::get_i32();
 }
 IRType *ast_create_type_char() {
-    return IRType::get_char();
+    return IRType::get_i8();
 }
 IRType *ast_create_type_void() {
     return IRType::get_void();
@@ -55,7 +55,6 @@ ASTNode *ast_create_declarator_ptr(ASTNode *base_type) {
 ASTNode *ast_create_definition_function(IRType *type, ASTNode *ident, ASTNode_List *params,
                                         ASTNode_List *body) {
     ASTNode *node = new FunctionNode(type, ident, params, body);
-    delete type;
     return node;
 }
 ASTNode *ast_create_declaration_parameter(IRType *type, ASTNode *ident) {

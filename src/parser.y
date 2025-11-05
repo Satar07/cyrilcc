@@ -25,14 +25,14 @@ void yyerror(const char* msg) {
 %code {
 }
 
-%expect 16
+%expect 20
 
 %union {
     int num;
     char* str;
     ASTNode* node;
     ASTNode_List* node_list;
-    Type* type;
+    IRType* type;
 }
 
 /* 运算符优先级 */
@@ -74,7 +74,6 @@ void yyerror(const char* msg) {
 
 /* 变量定义 */
 %type <node_list> var_definition_list
-%type <node> var_definition_single
 %type <node> var_definition
 
 /* 语句块 */

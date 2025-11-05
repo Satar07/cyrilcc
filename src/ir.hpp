@@ -2,6 +2,7 @@
 
 #include "ast.hpp"  // 包含 ast.hpp
 #include "type.hpp" // 包含 type.hpp
+#include <cstddef>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -50,6 +51,16 @@ struct IROperand {
     bool is_valid() const {
         return type != nullptr;
     }
+
+    std::string to_string() const {
+        switch (op_type) {
+            case IROperandType::IMM: return std::to_string(imm_value);
+            case IROperandType::REG: return name;
+            case IROperandType::LABEL: return name;
+            case IROperandType::GLOBAL: return name;
+        }
+        return "<?>";
+    }
 };
 
 // --- IR 指令集 ---
@@ -59,14 +70,14 @@ enum class IROp {
     // 无条件跳转
     BR,
     // 条件跳转 (TEST/CMP + Branch)
-    BRZ,  // Branch if Zero (Equal)
-    BRNZ, // Branch if Not Zero (Not Equal)
-    BRLT, // Branch if Less Than
-    BRGT, // Branch if Greater Than
-    BRLE, // Branch if Less or Equal
-    BRGE, // Branch if Greater or Equal
-    BREQ, // Branch if Equal (同 BRZ)
-    BRNE, // Branch if Not Equal (同 BRNZ)
+    BRZ,
+    BRNZ,
+    BRLT,
+    BRGT,
+    BRLE,
+    BRGE,
+    BREQ,
+    BRNE,
     // 比较 (设置标志位)
     TEST, // (在我们的实现中，TEST 被内置到条件跳转中)
     // 内存
@@ -90,12 +101,84 @@ enum class IROp {
     LABEL
 };
 
+// 辅助函数：将 IROp 转换为字符串
+inline std::string op_to_string(IROp op) {
+    switch (op) {
+        case IROp::RET: return "ret";
+        case IROp::BR: return "br";
+        case IROp::BRZ: return "brz";
+        case IROp::BRNZ: return "brnz";
+        case IROp::BRLT: return "brlt";
+        case IROp::BRGT: return "brgt";
+        case IROp::BRLE: return "brle";
+        case IROp::BRGE: return "brge";
+        case IROp::BREQ: return "breq";
+        case IROp::BRNE: return "brne";
+        case IROp::TEST: return "test";
+        case IROp::ALLOCA: return "alloca";
+        case IROp::LOAD: return "load";
+        case IROp::STORE: return "store";
+        case IROp::ADD: return "add";
+        case IROp::SUB: return "sub";
+        case IROp::MUL: return "mul";
+        case IROp::DIV: return "div";
+        case IROp::CALL: return "call";
+        case IROp::INPUT_I32: return "input_i32";
+        case IROp::INPUT_I8: return "input_i8";
+        case IROp::OUTPUT_I32: return "output_i32";
+        case IROp::OUTPUT_I8: return "output_i8";
+        case IROp::OUTPUT_STR: return "output_str";
+        case IROp::LABEL: return "label";
+    }
+    return "unknown_op";
+}
+
 struct IRInstruction {
     IROp op;
     std::vector<IROperand> args;
     std::optional<IROperand> result;
     IRInstruction(IROp o, std::vector<IROperand> a = {}, std::optional<IROperand> r = std::nullopt)
         : op(o), args(std::move(a)), result(std::move(r)) {}
+
+    void dump(std::ostream &os) const {
+        // 1. 打印缩进
+        os << "  ";
+
+        // 2. 打印结果 (e.g., "%1 = ")
+        if (result) {
+            os << result->to_string() << " = ";
+        }
+
+        // 3. 打印操作码 (e.g., "add")
+        os << op_to_string(op);
+
+        // 4. 打印操作数 (e.g., " i32 %a, i32 5")
+        for (const auto &arg : args) {
+            os << " ";
+
+            // 特殊处理：跳转目标 (label) 不显示类型
+            if (arg.op_type == IROperandType::LABEL && op != IROp::LABEL) {
+                os << "label " << arg.to_string();
+            }
+            // 特殊处理：STORE 指令的第二个操作数 (指针)
+            else if (op == IROp::STORE && &arg == &args[1]) {
+                os << arg.type->to_string() << " " << arg.to_string();
+            }
+            // 特殊处理：CALL 指令的第一个操作数 (函数名)
+            else if (op == IROp::CALL && &arg == &args[0]) {
+                os << arg.type->to_string() << " " << arg.to_string();
+            }
+            // 默认情况：(类型 值)
+            else {
+                // 打印类型 (e.g., "i32", "i8*")
+                if (arg.type) {
+                    os << arg.type->to_string() << " ";
+                }
+                // 打印值 (e.g., "5", "%1", "@g_var")
+                os << arg.to_string();
+            }
+        }
+    }
 };
 
 // --- 基本块 ---
@@ -120,7 +203,6 @@ struct IRGlobalVar {
     std::string name;
     IRType *type;
     std::string init_str; // 仅用于字符串字面量
-    // (根据约束，移除其他初始化字段)
     IRGlobalVar(std::string n, IRType *t) : name(std::move(n)), type(t) {}
 };
 
@@ -128,7 +210,33 @@ struct IRGlobalVar {
 struct IRModule {
     std::vector<IRGlobalVar> globals;
     std::vector<IRFunction> functions;
-    std::unordered_map<std::string, IROperand> global_symbols; // 全局符号表
+    std::unordered_map<std::string, IROperand> global_symbols;
+
+    // 完整的 Dump 实现
+    void dump(std::ostream &os) const {
+        os << "; --- Global Variables ---\n";
+        for (const auto &g : globals) {
+            os << g.name << " = global " << g.type->to_string();
+            if (!g.init_str.empty()) {
+                // 简单的字符串转义
+                std::string s;
+                for (char c : g.init_str) {
+                    if (c == '\n')
+                        s += "\\0A";
+                    else if (c == '\t')
+                        s += "\\09";
+                    else if (c == '"')
+                        s += "\\22";
+                    else if (c == '\\')
+                        s += "\\5C";
+                    else
+                        s += c;
+                }
+                os << " c\"" << s << "\\00\"";
+            }
+            os << "\n";
+        }
+        os << "\n";
 
         for (const auto &f : functions) {
             os << "define " << f.ret_type->to_string() << " " << f.name << "(";
