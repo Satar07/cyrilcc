@@ -104,7 +104,7 @@ void yyerror(const char* msg) {
 
 /* 顶层结构 */
 start: definition_list {
-    DBG_PRINT("Parsing completed.");
+    DBG_PRINT("Parsing completed.\n");
     ast_setup_program($1);
 }
 ;

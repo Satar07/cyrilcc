@@ -287,7 +287,7 @@ class IRGenerator {
 
     // --- 辅助工具 ---
     std::string new_label(const std::string &prefix = "L") {
-        return prefix + "_" + std::to_string(label_cnt++);
+        return prefix + std::to_string(label_cnt++);
     }
     IROperand new_reg(IRType *type) {
         return IROperand::create_reg("%" + std::to_string(vreg_cnt++), type);
@@ -510,9 +510,9 @@ class IRGenerator {
     }
 
     void visit(IfStatementNode *node) {
-        std::string true_l = new_label("if_true");
-        std::string false_l = node->else_branch ? new_label("if_else") : new_label("if_end");
-        std::string end_l = node->else_branch ? new_label("if_end") : false_l;
+        std::string true_l = new_label("iftrue");
+        std::string false_l = node->else_branch ? new_label("ifelse") : new_label("ifend");
+        std::string end_l = node->else_branch ? new_label("ifend") : false_l;
 
         visit_condition(node->condition.get(), true_l, false_l);
 
@@ -529,9 +529,9 @@ class IRGenerator {
     }
 
     void visit(WhileStatementNode *node) {
-        std::string cond_l = new_label("while_cond");
-        std::string body_l = new_label("while_body");
-        std::string end_l = new_label("while_end");
+        std::string cond_l = new_label("whilecond");
+        std::string body_l = new_label("whilebody");
+        std::string end_l = new_label("whileend");
 
         emit(IROp::BR, { IROperand::create_label(cond_l) });
         create_block(cond_l);
@@ -547,10 +547,10 @@ class IRGenerator {
     }
 
     void visit(ForStatementNode *node) {
-        std::string cond_l = new_label("for_cond");
-        std::string body_l = new_label("for_body");
-        std::string inc_l = new_label("for_inc");
-        std::string end_l = new_label("for_end");
+        std::string cond_l = new_label("forcond");
+        std::string body_l = new_label("forbody");
+        std::string inc_l = new_label("forinc");
+        std::string end_l = new_label("forend");
 
         if (node->initialization) dispatch(node->initialization.get());
 
@@ -575,7 +575,7 @@ class IRGenerator {
     }
 
     void visit(SwitchStatementNode *node) {
-        std::string end_label = new_label("switch_end");
+        std::string end_label = new_label("switchend");
         loop_stack.push_back({ "", end_label }); // 注册 'break' 目标
 
         IROperand val = dispatch_expr(node->condition.get());
@@ -589,10 +589,10 @@ class IRGenerator {
         for (auto &stmt_ptr : node->body->nodes) {
             ASTNode *stmt = stmt_ptr.get();
             if (auto case_node = dynamic_cast<CaseStatementNode *>(stmt)) {
-                if (pending_label.empty()) pending_label = new_label("case_block");
+                if (pending_label.empty()) pending_label = new_label("caseblock");
                 case_targets[case_node->case_value] = pending_label;
             } else if (dynamic_cast<DefaultStatementNode *>(stmt)) {
-                if (pending_label.empty()) pending_label = new_label("case_default");
+                if (pending_label.empty()) pending_label = new_label("casedefault");
                 default_target = pending_label;
             } else if (auto block_node = dynamic_cast<CaseBlockStatementNode *>(stmt)) {
                 if (!pending_label.empty()) {
@@ -754,7 +754,7 @@ class IRGenerator {
         return IROperand::create_imm(static_cast<int>(node->value), IRType::get_i8());
     }
     IROperand visit(StringLiteralNode *node) {
-        std::string lbl = "@str_" + std::to_string(str_cnt++);
+        std::string lbl = "@str" + std::to_string(str_cnt++);
         IRGlobalVar g(lbl, IRType::get_char_ptr());
         g.init_str = node->value;
         module.globals.push_back(g);

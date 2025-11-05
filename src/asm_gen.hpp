@@ -404,6 +404,21 @@ class AsmGenerator {
 
     // --- core code ---
 
+    void spill_reg(int reg, std::string reason) {
+        if (reg_cache_rev.count(reg)) {
+            std::string name_to_spill = reg_cache_rev.at(reg);
+            if (!temp_home_map.count(name_to_spill)) {
+                throw std::runtime_error("Spill failed: No home for " + name_to_spill);
+            }
+            int home_offset = temp_home_map.at(name_to_spill);
+            emit("STO (R" + std::to_string(REG_FP) + format_offset(home_offset) + "), R" +
+                     std::to_string(reg),
+                 "Spill " + name_to_spill + " (" + reason + ")");
+            reg_cache.erase(name_to_spill);
+            reg_cache_rev.erase(reg);
+        }
+    }
+
     // 获取内存操作的助记符 (LOD/LDC 或 STO/STC)
     std::string get_mem_op_mnemonic(const IROperand &op, bool is_load = true) {
         IRType *type = op.type;
@@ -420,40 +435,57 @@ class AsmGenerator {
 
     // 确保 IR 值位于一个寄存器中
     void ensure_in_reg(const IROperand &op, int target_reg) {
+        auto target_reg_str = std::to_string(target_reg);
+
+        // Case 1: 立即数
         if (op.op_type == IROperandType::IMM) {
-            emit("LOD R" + std::to_string(target_reg) + ", " + std::to_string(op.imm_value),
-                 "Load immediate");
+            spill_reg(target_reg, "load imm"); // 确保目标寄存器可用
+            emit("LOD R" + target_reg_str + ", " + std::to_string(op.imm_value), "Load immediate");
             return;
         }
 
         const auto &name = op.name;
-        auto target_reg_str = std::to_string(target_reg);
 
-        // 已经缓存
-        if (reg_cache.contains(name)) {
-            int reg = reg_cache.at(name);
-            if (reg != target_reg) {
-                emit("LOD R" + target_reg_str + ", R" + std::to_string(reg),
-                     "Move " + name + " (cached)");
-            }
-            return;
-        }
-
-        // 为全局符号/标签 (e.g., @g, @str_0, L_1)
+        // Case 2: 全局/标签
         if (op.op_type == IROperandType::GLOBAL || op.op_type == IROperandType::LABEL) {
-            if (!global_label_map.count(name)) {
-                // 如果是 L_... 标签，它不在 global_label_map 中，直接使用
-                if (op.op_type == IROperandType::LABEL) {
-                    emit("LOD R" + target_reg_str + ", " + name, "Load label addr");
-                    return;
+            spill_reg(target_reg, "load addr"); // 确保目标寄存器可用
+            std::string label_name = name;
+            if (op.op_type == IROperandType::GLOBAL) {
+                if (!global_label_map.count(name)) {
+                    throw std::runtime_error("Global label not found: " + name);
                 }
-                throw std::runtime_error("Global label not found: " + name);
+                label_name = global_label_map.at(name);
             }
-            emit("LOD R" + target_reg_str + ", " + global_label_map.at(name), "Load global addr");
+            emit("LOD R" + target_reg_str + ", " + label_name, "Load global/label addr");
             return;
         }
 
-        // 是一个 REG (%0, %1)，从主页加载
+        if (op.op_type != IROperandType::REG) {
+            throw std::runtime_error("Unexpected operand type in ensure_in_reg");
+        }
+
+        // Case 3: REG 操作数
+
+        // Case 3a: 值已在目标寄存器中
+        if (reg_cache.count(name) && reg_cache.at(name) == target_reg) {
+            return; // 万事大吉
+        }
+
+        // Case 3b: 值在其他寄存器中
+        if (reg_cache.count(name)) {
+            int old_reg = reg_cache.at(name);
+            spill_reg(target_reg, "move reg"); // 腾出目标寄存器
+            emit("LOD R" + target_reg_str + ", R" + std::to_string(old_reg),
+                 "Move " + name + " (cached)");
+            // 更新缓存
+            reg_cache_rev.erase(old_reg);
+            reg_cache[name] = target_reg;
+            reg_cache_rev[target_reg] = name;
+            return;
+        }
+
+        // Case 3c: 值未缓存 (在主页中)
+        spill_reg(target_reg, "load home"); // 腾出目标寄存器
         if (not temp_home_map.contains(name)) {
             throw std::runtime_error("Temp var has no home: " + name);
         }
@@ -461,6 +493,9 @@ class AsmGenerator {
         emit("LOD R" + target_reg_str + ", (R" + std::to_string(REG_FP) +
                  format_offset(home_offset) + ")",
              "Reload " + name + " from home");
+        // 更新缓存
+        reg_cache[name] = target_reg;
+        reg_cache_rev[target_reg] = name;
     }
 
     // 为结果分配一个寄存器，如有必要就溢出
@@ -470,29 +505,21 @@ class AsmGenerator {
         }
         auto name = result_op.name;
 
-        auto name_in_reg_it = reg_cache.find(name);
-        auto target_reg_occupied_it = reg_cache_rev.find(target_reg);
+        // 1. 溢出目标寄存器中已有的任何内容
+        spill_reg(target_reg, "assign");
 
-        if (name_in_reg_it != reg_cache.end() && name_in_reg_it->second == target_reg) {
-            return; // 已经在正确的位置
-        }
-        if (target_reg_occupied_it != reg_cache_rev.end()) {
-            // 目标寄存器已被占用，溢出它
-            auto old_name_in_target_reg = target_reg_occupied_it->second;
-            int home_offset = temp_home_map.at(old_name_in_target_reg);
-            emit("STO (R" + std::to_string(REG_FP) + format_offset(home_offset) + "), R" +
-                     std::to_string(target_reg),
-                 "Spill " + old_name_in_target_reg);
-            reg_cache.erase(old_name_in_target_reg);
-        }
-        if (name_in_reg_it != reg_cache.end()) {
-            // 结果变量在另一个寄存器中，清除旧的映射
-            int old_reg_for_name = name_in_reg_it->second;
-            reg_cache_rev.erase(old_reg_for_name);
+        // 2. 如果此变量已在 *其他* 寄存器中，清除旧的映射
+        if (reg_cache.count(name)) {
+            int old_reg = reg_cache.at(name);
+            if (old_reg != target_reg) {
+                reg_cache_rev.erase(old_reg);
+            }
         }
 
-        reg_cache.insert_or_assign(name, target_reg);
-        reg_cache_rev.insert_or_assign(target_reg, name);
+        // 3. 建立新映射
+        reg_cache[name] = target_reg;
+        reg_cache_rev[target_reg] = name;
+        // 调用者现在将发出指令，将新值放入 target_reg
     }
 
     // 溢出所有缓存的寄存器
