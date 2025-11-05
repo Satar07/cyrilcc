@@ -130,7 +130,31 @@ struct IRModule {
     std::vector<IRFunction> functions;
     std::unordered_map<std::string, IROperand> global_symbols; // 全局符号表
 
-    void dump(std::ostream &os) const { /* 实现省略，但需存在 */ }
+        for (const auto &f : functions) {
+            os << "define " << f.ret_type->to_string() << " " << f.name << "(";
+            for (size_t i = 0; i < f.params.size(); ++i) {
+                os << f.params[i].type->to_string() << " " << f.params[i].to_string();
+                if (i < f.params.size() - 1) os << ", ";
+            }
+            os << ") {\n";
+
+            for (const auto &b : f.blocks) {
+                // 第一个指令 (LABEL) 比较特殊
+                if (!b.insts.empty() && b.insts[0].op == IROp::LABEL) {
+                    os << b.label << ":\n";
+                } else {
+                    os << ";" << b.label << " (no label):\n";
+                }
+
+                for (const auto &i : b.insts) {
+                    if (i.op == IROp::LABEL) continue; // 已经打印过
+                    i.dump(os);
+                    os << "\n";
+                }
+            }
+            os << "}\n\n";
+        }
+    }
 };
 
 // ========================================================
