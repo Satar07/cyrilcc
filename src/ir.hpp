@@ -2,6 +2,7 @@
 
 #include "ast.hpp"  // 包含 ast.hpp
 #include "type.hpp" // 包含 type.hpp
+#include <algorithm>
 #include <cstddef>
 #include <iostream>
 #include <memory>
@@ -71,13 +72,8 @@ enum class IROp {
     BR,
     // 条件跳转 (TEST/CMP + Branch)
     BRZ,
-    BRNZ,
     BRLT,
     BRGT,
-    BRLE,
-    BRGE,
-    BREQ,
-    BRNE,
     // 比较 (设置标志位)
     TEST, // (在我们的实现中，TEST 被内置到条件跳转中)
     // 内存
@@ -107,13 +103,8 @@ inline std::string op_to_string(IROp op) {
         case IROp::RET: return "ret";
         case IROp::BR: return "br";
         case IROp::BRZ: return "brz";
-        case IROp::BRNZ: return "brnz";
         case IROp::BRLT: return "brlt";
         case IROp::BRGT: return "brgt";
-        case IROp::BRLE: return "brle";
-        case IROp::BRGE: return "brge";
-        case IROp::BREQ: return "breq";
-        case IROp::BRNE: return "brne";
         case IROp::TEST: return "test";
         case IROp::ALLOCA: return "alloca";
         case IROp::LOAD: return "load";
@@ -185,6 +176,9 @@ struct IRInstruction {
 struct IRBasicBlock {
     std::string label;
     std::vector<IRInstruction> insts;
+
+    std::vector<IRBasicBlock *> successors;
+    std::vector<IRBasicBlock *> predecessors;
     IRBasicBlock(std::string l) : label(std::move(l)) {}
 };
 
@@ -196,6 +190,72 @@ struct IRFunction {
     std::vector<IRBasicBlock> blocks;                        // 基本块列表
     std::unordered_map<std::string, IROperand> symbol_table; // 局部变量表 (映射到栈指针)
     IRFunction(std::string n, IRType *rt) : name(std::move(n)), ret_type(rt) {}
+
+    void build_cfg() {
+        // 1. 创建标签到基本块的映射
+        std::unordered_map<std::string, IRBasicBlock *> label_map;
+        for (IRBasicBlock &block : blocks) {
+            label_map[block.label] = &block;
+            // 清理旧链接 (以便重新构建)
+            block.successors.clear();
+            block.predecessors.clear();
+        }
+
+        // 加边
+        auto add_edge = [&](IRBasicBlock *from, IRBasicBlock *to) {
+            if (!from || !to) return; // 安全检查
+
+            // 避免重复添加后继
+            if (std::find(from->successors.begin(), from->successors.end(), to) ==
+                from->successors.end()) {
+                from->successors.push_back(to);
+            }
+            // 避免重复添加前驱
+            if (std::find(to->predecessors.begin(), to->predecessors.end(), from) ==
+                to->predecessors.end()) {
+                to->predecessors.push_back(from);
+            }
+        };
+
+        // 2. 遍历所有基本块
+        for (size_t i = 0; i < blocks.size(); ++i) {
+            IRBasicBlock &block = blocks[i];
+            bool has_unconditional_terminator = false;
+
+            for (const IRInstruction &inst : block.insts) {
+                switch (inst.op) {
+                    case IROp::RET: has_unconditional_terminator = true; break;
+                    case IROp::BR: {
+                        // 无条件跳转：添加一个后继
+                        std::string target_label = inst.args[0].name;
+                        if (label_map.count(target_label)) {
+                            add_edge(&block, label_map[target_label]);
+                        }
+                        has_unconditional_terminator = true;
+                        break;
+                    }
+                    case IROp::BRZ:
+                    case IROp::BRLT:
+                    case IROp::BRGT: {
+                        // 条件跳转：添加一个后继
+                        std::string target_label = inst.args[0].name;
+                        if (label_map.count(target_label)) {
+                            add_edge(&block, label_map[target_label]);
+                        }
+                        break;
+                    }
+                    default:
+                        // 非终结指令
+                        break;
+                }
+            }
+
+            // 3. 处理隐式“fall-through”
+            if (!has_unconditional_terminator && (i + 1) < blocks.size()) {
+                add_edge(&block, &blocks[i + 1]);
+            }
+        }
+    }
 };
 
 // --- 全局变量 ---
@@ -259,6 +319,27 @@ struct IRModule {
                     i.dump(os);
                     os << "\n";
                 }
+
+                os << " ; Predecessors: ";
+                if (b.predecessors.empty()) {
+                    os << "<none>";
+                } else {
+                    for (size_t p = 0; p < b.predecessors.size(); ++p) {
+                        os << b.predecessors[p]->label
+                           << (p < b.predecessors.size() - 1 ? ", " : "");
+                    }
+                }
+                os << "\n";
+
+                os << " ; Successors: ";
+                if (b.successors.empty()) {
+                    os << "<none>";
+                } else {
+                    for (size_t s = 0; s < b.successors.size(); ++s) {
+                        os << b.successors[s]->label << (s < b.successors.size() - 1 ? ", " : "");
+                    }
+                }
+                os << "\n";
             }
             os << "}\n\n";
         }
@@ -420,28 +501,46 @@ class IRGenerator {
         if (auto bin_op = dynamic_cast<BinaryOpNode *>(cond)) {
             IROperand lhs = dispatch_expr(bin_op->left.get());
             IROperand rhs = dispatch_expr(bin_op->right.get());
-            emit(IROp::TEST, { lhs, rhs }); // 假设 TEST 设置标志位
+            emit(IROp::TEST, { lhs, rhs });
 
-            IROp br_op;
             switch (bin_op->op) {
-                case BinaryOpKind::LT: br_op = IROp::BRLT; break;
-                case BinaryOpKind::GT: br_op = IROp::BRGT; break;
-                case BinaryOpKind::LE: br_op = IROp::BRLE; break;
-                case BinaryOpKind::GE: br_op = IROp::BRGE; break;
-                case BinaryOpKind::EQ: br_op = IROp::BREQ; break;
-                case BinaryOpKind::NE: br_op = IROp::BRNE; break;
+                case BinaryOpKind::LT:
+                    emit(IROp::BRLT, { IROperand::create_label(true_label) });
+                    emit(IROp::BR,
+                         { IROperand::create_label(false_label) }); // else goto false_label;
+                    break;
+                case BinaryOpKind::GT:
+                    emit(IROp::BRGT, { IROperand::create_label(true_label) });
+                    emit(IROp::BR,
+                         { IROperand::create_label(false_label) }); // else goto false_label;
+                    break;
+                case BinaryOpKind::EQ: // if (lhs == rhs) goto true_label;
+                    emit(IROp::BRZ, { IROperand::create_label(true_label) });
+                    emit(IROp::BR,
+                         { IROperand::create_label(false_label) }); // else goto false_label;
+                    break;
+                case BinaryOpKind::NE: // if (lhs != rhs) ...
+                    emit(IROp::BRZ, { IROperand::create_label(false_label) });
+                    emit(IROp::BR, { IROperand::create_label(true_label) });
+                    break;
+                case BinaryOpKind::LE: // if (lhs <= rhs) ...
+                    emit(IROp::BRGT, { IROperand::create_label(false_label) });
+                    emit(IROp::BR, { IROperand::create_label(true_label) });
+                    break;
+                case BinaryOpKind::GE: // if (lhs >= rhs) ...
+                    emit(IROp::BRLT, { IROperand::create_label(false_label) });
+                    emit(IROp::BR, { IROperand::create_label(true_label) });
+                    break;
+
                 default: goto generic_cond; // 非比较运算
             }
-            emit(br_op, { IROperand::create_label(true_label) });
-            emit(IROp::BR, { IROperand::create_label(false_label) });
-            return;
+            return; // 完成二元操作处理
         }
     generic_cond:
-        // 表达式作为条件 (e.g., if(x))
         IROperand val = dispatch_expr(cond);
         emit(IROp::TEST, { val, IROperand::create_imm(0, IRType::get_i32()) });
-        emit(IROp::BRNZ, { IROperand::create_label(true_label) }); // 不为 0 则跳转
-        emit(IROp::BR, { IROperand::create_label(false_label) });
+        emit(IROp::BRZ, { IROperand::create_label(false_label) });
+        emit(IROp::BR, { IROperand::create_label(true_label) });
     }
 
     // --- 节点 Visit 方法 ---
@@ -490,12 +589,30 @@ class IRGenerator {
         for (auto &stmt : node->body->nodes) dispatch(stmt.get());
 
         // 确保有返回
-        if (cur_block->insts.empty() || cur_block->insts.back().op != IROp::RET) {
+        bool last_block_terminated = false;
+        if (cur_block && !cur_block->insts.empty()) {
+            // 检查最后一条指令
+            IROp last_op = cur_block->insts.back().op;
+            if (last_op == IROp::RET || last_op == IROp::BR) {
+                last_block_terminated = true;
+            }
+        }
+
+        // 如果最后一个块是 "unreachable" (即只有 label)
+        // 并且它不是 entry 块，我们认为它已经被前一个块终止了
+        if (cur_block && cur_block->insts.size() == 1 && cur_block->insts[0].op == IROp::LABEL &&
+            cur_func->blocks.size() > 1) {
+            last_block_terminated = true;
+        }
+
+        // 确保有返回
+        if (!last_block_terminated) {
             emit(IROp::RET,
                  node->return_type->is_void()
                      ? std::vector<IROperand>{}
                      : std::vector<IROperand>{ IROperand::create_imm(0, IRType::get_i32()) });
         }
+        cur_func->build_cfg();
         cur_func = nullptr;
     }
 
@@ -607,7 +724,7 @@ class IRGenerator {
         for (const auto &[case_val, target_label] : case_targets) {
             IROperand imm = IROperand::create_imm(case_val, IRType::get_i32());
             emit(IROp::TEST, { val, imm }); // 假设 TEST 比较 val 和 imm
-            emit(IROp::BREQ, { IROperand::create_label(target_label) });
+            emit(IROp::BRZ, { IROperand::create_label(target_label) });
         }
         // 跳转到 default (或 end)
         emit(IROp::BR, { IROperand::create_label(default_target) });

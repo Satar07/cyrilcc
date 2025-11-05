@@ -216,14 +216,8 @@ class AsmGenerator {
                 break;
 
             case IROp::BRZ:
-            case IROp::BREQ:
-                spill_all_live_regs("BRZ/BREQ");
+                spill_all_live_regs("BRZ");
                 emit("JEZ " + get_asm_label(inst.args[0]));
-                break;
-            case IROp::BRNZ:
-            case IROp::BRNE:
-                spill_all_live_regs("BRNZ/BRNE");
-                emit("JNZ " + get_asm_label(inst.args[0]));
                 break;
             case IROp::BRLT:
                 spill_all_live_regs("BRLT");
@@ -232,14 +226,6 @@ class AsmGenerator {
             case IROp::BRGT:
                 spill_all_live_regs("BRGT");
                 emit("JGZ " + get_asm_label(inst.args[0]));
-                break;
-            case IROp::BRLE:
-                spill_all_live_regs("BRLE");
-                emit("JLE " + get_asm_label(inst.args[0]));
-                break;
-            case IROp::BRGE:
-                spill_all_live_regs("BRGE");
-                emit("JGE " + get_asm_label(inst.args[0]));
                 break;
 
             case IROp::ALLOCA:
@@ -484,7 +470,14 @@ class AsmGenerator {
             return;
         }
 
-        // Case 3c: 值未缓存 (在主页中)
+        // Case 3c: 值在 alloca 中
+        if (alloca_map.count(name)) {
+            spill_reg(target_reg, "load alloca addr"); // 腾出目标寄存器
+            get_var_address(op, target_reg);           // 加载 %0 的地址到 target_reg
+            return;
+        }
+
+        // Case 3d: 值未缓存 (在主页中)
         spill_reg(target_reg, "load home"); // 腾出目标寄存器
         if (not temp_home_map.contains(name)) {
             throw std::runtime_error("Temp var has no home: " + name);
