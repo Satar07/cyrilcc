@@ -5,26 +5,26 @@ main()
 	input j;
 
 	while(i<j)
-	{ 
-		output i; 
+	{
+		output i;
 		i=i+1;
 		if(i>10)
 		{
-			output "break"
+			output "break";
 			break;
-		}		
+		}
 	}
 	output "\n";
 
 	while(i<j)
-	{ 
-		output i; 
+	{
+		output i;
 		i=i+1;
 		if(i==10)
 		{
-			output "continue"
+			output "continue";
 			continue;
-		}	
+		}
 	}
 	output "\n";
 

@@ -571,7 +571,7 @@ class IRGenerator {
         cur_func = &module.functions.back();
         vreg_cnt = 0; // 重置虚拟寄存器
 
-        create_block("entry");
+        create_block(new_label("entry"));
 
         for (auto &param_node : node->params->nodes) {
             auto param = static_cast<ParameterDeclarationNode *>(param_node.get());

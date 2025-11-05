@@ -25,7 +25,7 @@ void yyerror(const char* msg) {
 %code {
 }
 
-%expect 20
+%expect 18
 
 %union {
     int num;
@@ -62,7 +62,7 @@ void yyerror(const char* msg) {
 %type <node> definition
 
 /* 类型定义 */
-%type <type> type_specifier optional_type_specifier
+%type <type> type_specifier
 
 /* 标识符声明 */
 %type <node> declarator
@@ -130,14 +130,6 @@ type_specifier: INT {
 }
 ;
 
-optional_type_specifier : {
-    $$ = ast_create_type_void();
-}
-| type_specifier {
-    $$ = $1;
-}
-;
-
 /* 标识符声明 */
 declarator: '*' declarator {
     $$ = ast_create_declarator_ptr($2);
@@ -148,8 +140,11 @@ declarator: '*' declarator {
 ;
 
 /* 函数定义 */
-function_definition: optional_type_specifier declarator '(' optional_function_parameter_declaration_list ')' '{' block_item_list '}' {
+function_definition: type_specifier declarator '(' optional_function_parameter_declaration_list ')' '{' block_item_list '}' {
     $$ = ast_create_definition_function($1, $2, $4, $7);
+}
+| declarator '(' optional_function_parameter_declaration_list ')' '{' block_item_list '}' {
+    $$ = ast_create_definition_function(ast_create_type_void(), $1, $3, $6);
 }
 ;
 
