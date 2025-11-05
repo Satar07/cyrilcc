@@ -1,4 +1,2 @@
-- `* &`
 - array
 - struct
-- JNZ 改正

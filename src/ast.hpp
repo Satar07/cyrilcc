@@ -387,9 +387,12 @@ class CharacterLiteralNode : public ExpressionNode {
 };
 
 class StringLiteralNode : public ExpressionNode {
+  private:
+    std::string original_value;
+
   public:
     std::string value;
-    StringLiteralNode(const char *v) {
+    StringLiteralNode(const char *v) : original_value(v) {
         if (!v) {
             return;
         }
@@ -422,7 +425,7 @@ class StringLiteralNode : public ExpressionNode {
     }
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "String: \"" << value << "\"\n";
+        os << "String: \"" << original_value << "\"\n";
     }
 };
 

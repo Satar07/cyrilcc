@@ -1,5 +1,11 @@
 # https://gitignore.io/api/c,cmake,linux,macos,windows
 
+asm-machine/asm
+asm-machine/asm.l.c
+asm-machine/asm.y.c
+asm-machine/asm.y.h
+asm-machine/input.s
+
 ### C ###
 # Prerequisites
 *.d

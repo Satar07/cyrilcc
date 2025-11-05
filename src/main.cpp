@@ -1,3 +1,4 @@
+#include <fstream>
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,12 +25,20 @@ int main(int argc, char *argv[]) {
     yyparse();
 
     if (root) {
-        // 打印 AST
         root.get()->print(std::cout);
-        // 生成 IR
+
         IRGenerator ir{ root };
         ir.module.dump(std::cout);
-        AsmGenerator asm_gen{ ir.module, std::cout };
+
+        const char *asm_output_path = "asm-machine/input.s";
+        std::ofstream asm_file_stream(asm_output_path);
+
+        if (!asm_file_stream.is_open()) {
+            fprintf(stderr, "Error: failed to open output file %s\n", asm_output_path);
+            exit(1);
+        }
+
+        AsmGenerator asm_gen{ ir.module, asm_file_stream };
         asm_gen.generate();
     }
 

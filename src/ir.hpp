@@ -264,6 +264,18 @@ struct IRGlobalVar {
     IRType *type;
     std::string init_str; // 仅用于字符串字面量
     IRGlobalVar(std::string n, IRType *t) : name(std::move(n)), type(t) {}
+    std::string escaped_init_str() const {
+        std::string s;
+        for (char c : init_str) {
+            if (c == '\n')
+                s += "\\n";
+            else if (c == '\t')
+                s += "\\t";
+            else
+                s += c;
+        }
+        return s;
+    }
 };
 
 // --- 模块 (Top Level) ---
@@ -278,21 +290,7 @@ struct IRModule {
         for (const auto &g : globals) {
             os << g.name << " = global " << g.type->to_string();
             if (!g.init_str.empty()) {
-                // 简单的字符串转义
-                std::string s;
-                for (char c : g.init_str) {
-                    if (c == '\n')
-                        s += "\\0A";
-                    else if (c == '\t')
-                        s += "\\09";
-                    else if (c == '"')
-                        s += "\\22";
-                    else if (c == '\\')
-                        s += "\\5C";
-                    else
-                        s += c;
-                }
-                os << " c\"" << s << "\\00\"";
+                os << " \"" << g.escaped_init_str() << "\"";
             }
             os << "\n";
         }

@@ -92,7 +92,7 @@ class AsmGenerator {
                     dbs += std::to_string(static_cast<int>(c)) + ", ";
                 }
                 dbs += "0"; // null terminator
-                emit(dbs, "String: " + global.name);
+                emit(dbs, "String: " + global.escaped_init_str());
             } else {
                 // 假定所有其他全局变量为 4 字节，零初始化
                 emit("DBN 0, 4", "Global var: " + global.name);
