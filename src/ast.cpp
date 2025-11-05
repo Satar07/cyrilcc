@@ -42,6 +42,9 @@ IRType *ast_create_type_char() {
 IRType *ast_create_type_void() {
     return IRType::get_void();
 }
+IRType *ast_create_type_struct(char *name) {
+    return IRType::get_struct(name);
+}
 
 // 标识符声明
 ASTNode *ast_create_declarator_ident(char *name) {
@@ -49,6 +52,9 @@ ASTNode *ast_create_declarator_ident(char *name) {
 }
 ASTNode *ast_create_declarator_ptr(ASTNode *base_type) {
     return new PointerDeclarationNode(base_type);
+}
+ASTNode *ast_create_declarator_array(ASTNode *base_decl, int size) {
+    return new ArrayDeclarationNode(base_decl, size);
 }
 
 // 定义
@@ -63,6 +69,10 @@ ASTNode *ast_create_declaration_parameter(IRType *type, ASTNode *ident) {
 
 ASTNode *ast_create_definition_variable_list(IRType *type, ASTNode_List *vars) {
     return new VariableDeclarationListNode(type, vars);
+}
+ASTNode *ast_create_definition_struct(char *name, ASTNode_List *fields) {
+    auto node = new StructDefinitionNode(name, fields);
+    return node;
 }
 
 // 语句
@@ -149,6 +159,14 @@ ASTNode *ast_create_unary_op_addr(ASTNode *expr) {
 }
 ASTNode *ast_create_unary_op_deref(ASTNode *expr) {
     return new UnaryOpNode(UnaryOpKind::DEREF, expr);
+}
+
+ASTNode *ast_create_postfix_array_index(ASTNode *array, ASTNode *index) {
+    return new ArrayIndexNode(array, index);
+}
+
+ASTNode *ast_create_postfix_member_access(ASTNode *object, char *name) {
+    return new MemberAccessNode(object, name);
 }
 
 ASTNode *ast_create_immediate_integer(int val) {

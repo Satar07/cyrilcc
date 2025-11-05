@@ -25,7 +25,7 @@ void yyerror(const char* msg) {
 %code {
 }
 
-%expect 18
+%expect 19
 
 %union {
     int num;
@@ -40,6 +40,7 @@ void yyerror(const char* msg) {
 %left '<' '>' LE GE EQ NE
 %left '+' '-'
 %left '*' '/'
+%left '.' '[' ']'
 %right UNARY_PREC
 
 
@@ -51,6 +52,7 @@ void yyerror(const char* msg) {
 
 /* 关键字 类型 */
 %token INT CHAR
+%token STRUCT
 
 /* 关键字 控制流 */
 %token IF ELSE WHILE FOR SWITCH CASE DEFAULT
@@ -61,8 +63,14 @@ void yyerror(const char* msg) {
 %type <node_list> start definition_list
 %type <node> definition
 
+/* 结构体定义 */
+%type <node> struct_definition
+%type <node_list> struct_field_list
+%type <node> struct_field
+
 /* 类型定义 */
 %type <type> type_specifier
+%type <str> struct_specifier
 
 /* 标识符声明 */
 %type <node> declarator
@@ -91,6 +99,7 @@ void yyerror(const char* msg) {
 /* 表达式 */
 %type <node> expression optional_expression
 %type <node> assignment comparison calculation immediate
+%type <node> postfix_expression
 %type <node> unary_expression
 
 /* 变量调用 */
@@ -119,6 +128,26 @@ definition_list: definition {
 
 definition: var_definition ';' { $$ = $1; }
 | function_definition { $$ = $1; }
+| struct_definition ';' { $$ = $1; }
+;
+
+/* 结构体定义 */
+struct_definition: STRUCT IDENTIFIER '{' struct_field_list '}' {
+    $$ = ast_create_definition_struct($2, $4);
+}
+;
+
+struct_field_list: struct_field {
+    $$ = ast_list_create($1);
+}
+| struct_field_list struct_field {
+    $$ = ast_list_append($1, $2);
+}
+;
+
+struct_field: var_definition ';' {
+    $$ = $1;
+}
 ;
 
 /* 类型定义 */
@@ -128,11 +157,22 @@ type_specifier: INT {
 | CHAR {
     $$ = ast_create_type_char();
 }
+| struct_specifier {
+    $$ = ast_create_type_struct($1);
+}
+;
+
+struct_specifier: STRUCT IDENTIFIER {
+    $$ = $2;
+}
 ;
 
 /* 标识符声明 */
 declarator: '*' declarator {
     $$ = ast_create_declarator_ptr($2);
+}
+| declarator '[' INTEGER ']' {
+    $$ = ast_create_declarator_array($1, $3);
 }
 | IDENTIFIER {
     $$ = ast_create_declarator_ident($1);
@@ -316,7 +356,6 @@ optional_expression: { $$ = nullptr; }
 | expression { $$ = $1; }
 ;
 
-
 expression: assignment { $$ = $1; }
 | comparison { $$ = $1; }
 | calculation { $$ = $1; }
@@ -362,15 +401,24 @@ calculation: calculation '+' calculation {
 | unary_expression { $$ = $1; }
 ;
 
-unary_expression: immediate { $$ = $1; }
-| declared_var { $$ = $1; }
-| function_call { $$ = $1; }
-| '(' expression ')' { $$ = $2; }
+unary_expression: postfix_expression { $$ = $1; }
 | '&' unary_expression %prec UNARY_PREC {
     $$ = ast_create_unary_op_addr($2);
 }
 | '*' unary_expression %prec UNARY_PREC {
     $$ = ast_create_unary_op_deref($2);
+}
+;
+
+postfix_expression: immediate { $$ = $1; }
+| declared_var { $$ = $1; }
+| function_call { $$ = $1; }
+| '(' expression ')' { $$ = $2; }
+| postfix_expression '[' expression ']' {
+    $$ = ast_create_postfix_array_index($1, $3);
+}
+| postfix_expression '.' IDENTIFIER {
+    $$ = ast_create_postfix_member_access($1, $3);
 }
 ;
 

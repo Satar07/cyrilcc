@@ -9,6 +9,6 @@
         "program": "${ZED_WORKTREE_ROOT}/build/cyrilcc",
         "request": "launch",
         "adapter": "CodeLLDB",
-        "args": ["test/testcase/for-bc.m"]
+        "args": ["test/testcase/arr.m"]
     }
 ]

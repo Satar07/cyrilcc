@@ -8,6 +8,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 class ASTNode;
@@ -119,6 +120,30 @@ class PointerDeclarationNode : public DeclarationNode {
     }
 };
 
+class ArrayDeclarationNode : public DeclarationNode {
+  public:
+    std::unique_ptr<DeclarationNode> base_declaration;
+    int size;
+    ArrayDeclarationNode(ASTNode *base, int size) : DeclarationNode(""), size(size) {
+        this->base_declaration =
+            std::unique_ptr<DeclarationNode>(dynamic_cast<DeclarationNode *>(base));
+        if (!base_declaration)
+            throw std::runtime_error("ArrayDeclarationNode received non-DeclarationNode");
+        this->name = base_declaration->name;
+    }
+
+    IRType *build_type(IRType *base_type) override {
+        auto element_type = base_declaration->build_type(base_type);
+        return IRType::get_array(element_type, size);
+    }
+
+    void print(std::ostream &os, int indent = 0) const override {
+        print_indent(os, indent);
+        os << "ArrayDecl: [" << size << "]\n";
+        base_declaration->print(os, indent + 1);
+    }
+};
+
 // --- 函数 ---
 class FunctionNode : public ASTNode {
   public:
@@ -202,6 +227,38 @@ class VariableDeclarationListNode : public ASTNode {
         print_indent(os, indent);
         os << "VarDeclarations:\n";
         print_node_list(os, declarations.get(), indent + 1);
+    }
+};
+
+// --- 结构体定义 ---
+
+class StructDefinitionNode : public ASTNode {
+  public:
+    std::string name;
+    IRType *struct_type;
+
+    StructDefinitionNode(const char *name, ASTNode_List *fields_list) : name(name) {
+        std::vector<StructField> ir_fields;
+        if (fields_list) {
+            for (const auto &field_decl_list_node : fields_list->nodes) {
+                auto var_decl_list =
+                    dynamic_cast<VariableDeclarationListNode *>(field_decl_list_node.get());
+                if (!var_decl_list)
+                    throw std::runtime_error("Struct field must be a variable declaration");
+
+                for (const auto &var_def_node : var_decl_list->declarations->nodes) {
+                    auto var_def = static_cast<VariableDefinitionNode *>(var_def_node.get());
+                    ir_fields.push_back({ var_def->name, var_def->type,
+                                          0 }); // index 在register里面设置
+                }
+            }
+        }
+        this->struct_type = IRType::register_struct(name, std::move(ir_fields));
+    }
+
+    void print(std::ostream &os, int indent = 0) const override {
+        print_indent(os, indent);
+        os << "StructDef: " << name << "\n";
     }
 };
 
@@ -453,6 +510,37 @@ class UnaryOpNode : public ExpressionNode {
     }
 };
 
+class MemberAccessNode : public ExpressionNode {
+  public:
+    std::unique_ptr<ASTNode> object;
+    std::string member_name;
+    MemberAccessNode(ASTNode *obj, char *name) : object(obj), member_name(name) {}
+
+    void print(std::ostream &os, int indent = 0) const override {
+        print_indent(os, indent);
+        os << "MemberAccess: ." << member_name << "\n";
+        object->print(os, indent + 1);
+    }
+};
+
+class ArrayIndexNode : public ExpressionNode {
+  public:
+    std::unique_ptr<ASTNode> array;
+    std::unique_ptr<ASTNode> index;
+    ArrayIndexNode(ASTNode *arr, ASTNode *idx) : array(arr), index(idx) {}
+
+    void print(std::ostream &os, int indent = 0) const override {
+        print_indent(os, indent);
+        os << "ArrayIndex: []\n";
+        print_indent(os, indent + 1);
+        os << "Array:\n";
+        array->print(os, indent + 2);
+        print_indent(os, indent + 1);
+        os << "Index:\n";
+        index->print(os, indent + 2);
+    }
+};
+
 class AssignmentNode : public ExpressionNode {
   public:
     std::unique_ptr<ASTNode> lvalue, rvalue;
@@ -499,15 +587,19 @@ ASTNode_List *ast_list_append(ASTNode_List *list, ASTNode *node);
 IRType *ast_create_type_int();
 IRType *ast_create_type_char();
 IRType *ast_create_type_void();
+IRType *ast_create_type_struct(char *name);
 
 ASTNode *ast_create_declarator_ident(char *name);
 ASTNode *ast_create_declarator_ptr(ASTNode *base_type);
+ASTNode *ast_create_declarator_array(ASTNode *base_decl, int size);
 
 ASTNode *ast_create_definition_function(IRType *type, ASTNode *ident, ASTNode_List *params,
                                         ASTNode_List *body);
 ASTNode *ast_create_declaration_parameter(IRType *type, ASTNode *name);
 
 ASTNode *ast_create_definition_variable_list(IRType *type, ASTNode_List *vars);
+
+ASTNode *ast_create_definition_struct(char *name, ASTNode_List *fields);
 
 ASTNode *ast_create_statement_input(ASTNode *expr);
 ASTNode *ast_create_statement_output(ASTNode *expr);
@@ -540,6 +632,9 @@ ASTNode *ast_create_calculation_div(ASTNode *l, ASTNode *r);
 
 ASTNode *ast_create_unary_op_addr(ASTNode *expr);
 ASTNode *ast_create_unary_op_deref(ASTNode *expr);
+
+ASTNode *ast_create_postfix_array_index(ASTNode *array, ASTNode *index);
+ASTNode *ast_create_postfix_member_access(ASTNode *object, char *name);
 
 ASTNode *ast_create_immediate_integer(int val);
 ASTNode *ast_create_immediate_character(int val);

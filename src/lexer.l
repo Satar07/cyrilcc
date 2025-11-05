@@ -32,6 +32,7 @@ int yywrap() { return 1; }
 "switch" { return SWITCH; }
 "case" { return CASE; }
 "default" { return DEFAULT; }
+"struct"  { return STRUCT; }
 
 "+"|"-"|"*"|"/"|"("|")"|"<"|">"|"{"|"}"|";"|"="|","|":"|"["|"]"|"."|"&"|"*" {
     DBG_PRINT("SYMBOL: %s\n", yytext);

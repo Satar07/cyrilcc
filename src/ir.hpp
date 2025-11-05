@@ -80,6 +80,7 @@ enum class IROp {
     ALLOCA, // 分配栈空间
     LOAD,   // 从内存加载
     STORE,  // 存储到内存
+    GEP,    // 获取元素指针
     // 算术
     ADD,
     SUB,
@@ -109,6 +110,7 @@ inline std::string op_to_string(IROp op) {
         case IROp::ALLOCA: return "alloca";
         case IROp::LOAD: return "load";
         case IROp::STORE: return "store";
+        case IROp::GEP: return "getelementptr";
         case IROp::ADD: return "add";
         case IROp::SUB: return "sub";
         case IROp::MUL: return "mul";
@@ -137,7 +139,7 @@ struct IRInstruction {
 
         // 2. 打印结果 (e.g., "%1 = ")
         if (result) {
-            os << result->to_string() << " = ";
+            os << result->to_string() << " " << result->type->to_string() << " = ";
         }
 
         // 3. 打印操作码 (e.g., "add")
@@ -151,22 +153,22 @@ struct IRInstruction {
             if (arg.op_type == IROperandType::LABEL && op != IROp::LABEL) {
                 os << "label " << arg.to_string();
             }
-            // 特殊处理：STORE 指令的第二个操作数 (指针)
-            else if (op == IROp::STORE && &arg == &args[1]) {
-                os << arg.type->to_string() << " " << arg.to_string();
-            }
-            // 特殊处理：CALL 指令的第一个操作数 (函数名)
-            else if (op == IROp::CALL && &arg == &args[0]) {
-                os << arg.type->to_string() << " " << arg.to_string();
-            }
+            // // 特殊处理：STORE 指令的第二个操作数 (指针)
+            // else if (op == IROp::STORE && &arg == &args[1]) {
+            //     os << arg.to_string() << " " << arg.type->to_string();
+            // }
+            // // 特殊处理：CALL 指令的第一个操作数 (函数名)
+            // else if (op == IROp::CALL && &arg == &args[0]) {
+            //     os << arg.to_string() << " " << arg.type->to_string();
+            // }
             // 默认情况：(类型 值)
             else {
                 // 打印类型 (e.g., "i32", "i8*")
-                if (arg.type) {
-                    os << arg.type->to_string() << " ";
-                }
+                // if (arg.type) {
+                //     os ;
+                // }
                 // 打印值 (e.g., "5", "%1", "@g_var")
-                os << arg.to_string();
+                os << arg.to_string() << " " << arg.type->to_string();
             }
         }
     }
@@ -401,6 +403,10 @@ class IRGenerator {
             visit(n);
             return;
         }
+        if (auto n = dynamic_cast<StructDefinitionNode *>(node)) {
+            visit(n);
+            return;
+        }
         // 语句
         if (auto n = dynamic_cast<IfStatementNode *>(node)) {
             visit(n);
@@ -462,6 +468,8 @@ class IRGenerator {
         if (auto n = dynamic_cast<AssignmentNode *>(node)) return visit(n);
         if (auto n = dynamic_cast<BinaryOpNode *>(node)) return visit(n);
         if (auto n = dynamic_cast<UnaryOpNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<ArrayIndexNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<MemberAccessNode *>(node)) return visit(n);
         if (auto n = dynamic_cast<FunctionCallNode *>(node)) return visit(n);
         if (auto n = dynamic_cast<VariableReferenceNode *>(node)) return visit(n);
         if (auto n = dynamic_cast<IntegerLiteralNode *>(node)) return visit(n);
@@ -489,6 +497,38 @@ class IRGenerator {
             if (deref->op == UnaryOpKind::DEREF) {
                 return dispatch_expr(deref->operand.get()); // *p 的地址就是 p 的值
             }
+        }
+        if (auto member = dynamic_cast<MemberAccessNode *>(node)) {
+            IROperand base_ptr = get_lvalue_addr(member->object.get());
+            IRType *base_type = base_ptr.type->get_pointee_type();
+            if (!base_type->is_struct()) throw std::runtime_error("Member access on non-struct");
+
+            int field_index = base_type->get_field_index(member->member_name);
+
+            IRType *field_type = base_type->get_field(member->member_name)->type;
+            IROperand res_ptr = new_reg(IRType::get_pointer(field_type));
+
+            // GEP: %res_ptr = gep %base_ptr, i32 0, i32 <field_index>
+            emit(IROp::GEP,
+                 { base_ptr, IROperand::create_imm(0, IRType::get_i32()),
+                   IROperand::create_imm(field_index, IRType::get_i32()) },
+                 res_ptr);
+            return res_ptr;
+        }
+        if (auto idx = dynamic_cast<ArrayIndexNode *>(node)) {
+            IROperand base_ptr = get_lvalue_addr(idx->array.get());
+            IROperand index_val = dispatch_expr(idx->index.get());
+
+            IRType *base_type = base_ptr.type->get_pointee_type();
+            if (!base_type->is_array()) throw std::runtime_error("Array index on non-array");
+
+            IRType *elem_type = base_type->get_array_element_type();
+            IROperand res_ptr = new_reg(IRType::get_pointer(elem_type));
+
+            // GEP: %res_ptr = gep %base_ptr, i32 0, i32 %index_val
+            emit(IROp::GEP, { base_ptr, IROperand::create_imm(0, IRType::get_i32()), index_val },
+                 res_ptr);
+            return res_ptr;
         }
         throw std::runtime_error("Expression is not an lvalue");
     }
@@ -622,6 +662,8 @@ class IRGenerator {
             cur_func->symbol_table[vdef->name] = ptr;
         }
     }
+
+    void visit(StructDefinitionNode *_) {}
 
     void visit(IfStatementNode *node) {
         std::string true_l = new_label("iftrue");
@@ -817,6 +859,20 @@ class IRGenerator {
         }
     }
 
+    IROperand visit(ArrayIndexNode *node) {
+        IROperand ptr = get_lvalue_addr(node);
+        IROperand val = new_reg(ptr.type->get_pointee_type());
+        emit(IROp::LOAD, { ptr }, val);
+        return val;
+    }
+
+    IROperand visit(MemberAccessNode *node) {
+        IROperand ptr = get_lvalue_addr(node);
+        IROperand val = new_reg(ptr.type->get_pointee_type());
+        emit(IROp::LOAD, { ptr }, val);
+        return val;
+    }
+
     IROperand visit(BinaryOpNode *node) {
         // 比较运算在 visit_condition 中处理，这里只处理算术
         IROperand lhs = dispatch_expr(node->left.get());
@@ -856,6 +912,25 @@ class IRGenerator {
 
     IROperand visit(VariableReferenceNode *node) {
         IROperand ptr = get_symbol_ptr(node->name);
+        IRType *type = ptr.type->get_pointee_type();
+
+        // 不支持拷贝赋值 XD
+        if (type->is_struct()) {
+            throw std::runtime_error("Cannot use struct as r-value: " + node->name);
+        }
+        // 如果是 Array，退化为指向第一个元素的指针
+        if (type->is_array()) {
+            IRType *elem_type = type->get_array_element_type();
+            IROperand res_ptr = new_reg(IRType::get_pointer(elem_type));
+            // GEP: %res_ptr = gep %ptr, i32 0, i32 0
+            emit(IROp::GEP,
+                 { ptr, IROperand::create_imm(0, IRType::get_i32()),
+                   IROperand::create_imm(0, IRType::get_i32()) },
+                 res_ptr);
+            return res_ptr;
+        }
+
+        // primitive or pointer
         IROperand val = new_reg(ptr.type->get_pointee_type());
         emit(IROp::LOAD, { ptr }, val);
         return val;

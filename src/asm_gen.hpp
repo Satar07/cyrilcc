@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ir.hpp" // 包含更新后的 ir.hpp
+#include "type.hpp"
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -132,15 +133,18 @@ class AsmGenerator {
         for (const auto &block : func.blocks) {
             for (const auto &inst : block.insts) {
                 if (inst.op == IROp::ALLOCA) {
-                    auto name = inst.result.value().name;
-                    local_stack_size += 4; // 假设所有 alloca 都是 4 字节
+                    auto result_value = inst.result.value();
+                    auto name = result_value.name;
+                    local_stack_size +=
+                        result_value.type->get_pointee_type()->size(); // 分配的是指针指向的大小
                     this->alloca_map.insert({ name, -local_stack_size });
                     continue;
                 }
                 // 如果指令有结果（不是alloca），则为临时变量
                 if (inst.result && !inst.result->type->is_void()) {
-                    auto name = inst.result.value().name;
-                    local_stack_size += 4;
+                    auto result_value = inst.result.value();
+                    auto name = result_value.name;
+                    local_stack_size += result_value.type->size();
                     this->temp_home_map.insert({ name, -local_stack_size });
                 }
             }
@@ -283,6 +287,54 @@ class AsmGenerator {
                 break;
             }
 
+            case IROp::GEP: {
+                // GEP %res = GEP %base_ptr, i32 0, i32 %idx TODO 支持更多的
+                const auto &base_op = inst.args[0];
+                const auto &idx_op = inst.args[2];
+                const auto &result_op = inst.result.value();
+
+                IRType *base_type = base_op.type->get_pointee_type();
+
+                ensure_in_reg(base_op, SCRATCH_REGS[0]); // R8 = base_address
+
+                if (base_type->is_struct()) {
+                    // --- Struct: %res = GEP %base, 0, <field_idx> ---
+                    if (idx_op.op_type != IROperandType::IMM) {
+                        throw std::runtime_error("GEP struct index must be immediate");
+                    }
+                    int field_index = idx_op.imm_value;
+                    int offset = base_type->get_field_offset(field_index);
+
+                    if (offset > 0) {
+                        emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", " +
+                                 std::to_string(offset),
+                             "GEP: Add field offset " + std::to_string(offset));
+                    }
+
+                } else if (base_type->is_array()) {
+                    // --- Array: %res = GEP %base, 0, %idx ---
+                    int element_size = base_type->get_array_element_type()->size();
+
+                    ensure_in_reg(idx_op, SCRATCH_REGS[1]); // R9 = index
+                    spill_reg(SCRATCH_REGS[2], "GEP scratch");
+
+                    emit("LOD R" + std::to_string(SCRATCH_REGS[2]) + ", " +
+                             std::to_string(element_size),
+                         "GEP: Element size " + std::to_string(element_size));
+                    emit("MUL R" + std::to_string(SCRATCH_REGS[1]) + ", R" +
+                             std::to_string(SCRATCH_REGS[2]),
+                         "GEP: index * size");
+                    emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
+                             std::to_string(SCRATCH_REGS[1]),
+                         "GEP: base + offset");
+                } else {
+                    throw std::runtime_error("GEP on non-aggregate type: " +
+                                             base_type->to_string());
+                }
+                assign_to_reg(result_op, SCRATCH_REGS[0]);
+                break;
+            }
+
             // 二元操作
             case IROp::ADD:
             case IROp::SUB:
@@ -390,6 +442,7 @@ class AsmGenerator {
 
     // --- core code ---
 
+    // 目标寄存器里的值存回主页
     void spill_reg(int reg, std::string reason) {
         if (reg_cache_rev.count(reg)) {
             std::string name_to_spill = reg_cache_rev.at(reg);
@@ -419,7 +472,7 @@ class AsmGenerator {
         return is_load ? "LOD" : "STO";
     }
 
-    // 确保 IR 值位于一个寄存器中
+    // 确保给定IROperand安全的放到目标寄存器上
     void ensure_in_reg(const IROperand &op, int target_reg) {
         auto target_reg_str = std::to_string(target_reg);
 
@@ -491,7 +544,7 @@ class AsmGenerator {
         reg_cache_rev[target_reg] = name;
     }
 
-    // 为结果分配一个寄存器，如有必要就溢出
+    // 先spill,然后更新缓存，声明目标寄存器持有操作数
     void assign_to_reg(const IROperand &result_op, int target_reg) {
         if (result_op.op_type != IROperandType::REG) {
             throw std::runtime_error("Result of instruction must be a REG operand");
@@ -515,7 +568,7 @@ class AsmGenerator {
         // 调用者现在将发出指令，将新值放入 target_reg
     }
 
-    // 溢出所有缓存的寄存器
+    // spill所有缓存的寄存器
     void spill_all_live_regs(std::string reason) {
         if (reg_cache.empty()) return;
         emit("# Spilling all regs: " + reason);
