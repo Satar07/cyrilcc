@@ -1,4 +1,3 @@
-
 # --- Text Segment ---
     LOD R12, 65535          # Init Stack Pointer
     LOD R11, R12            # Init Frame Pointer
@@ -82,8 +81,8 @@ ifend3:
 
 # --- Data Segment ---
 STRstr0:
-    DBS 92, 110, 0          # String: @str0
+    DBS 10, 0               # String: @str0
 STRstr1:
-    DBS 92, 110, 0          # String: @str1
+    DBS 10, 0               # String: @str1
 STRstr2:
-    DBS 92, 110, 0          # String: @str2
+    DBS 10, 0               # String: @str2

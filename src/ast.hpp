@@ -2,6 +2,7 @@
 
 #include "type.hpp" // 包含新的类型系统
 #include <cstddef>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <ostream>
@@ -388,7 +389,37 @@ class CharacterLiteralNode : public ExpressionNode {
 class StringLiteralNode : public ExpressionNode {
   public:
     std::string value;
-    StringLiteralNode(const char *v) : value(v) {}
+    StringLiteralNode(const char *v) {
+        if (!v) {
+            return;
+        }
+        this->value.reserve(strlen(v));
+        for (const char *p = v; *p != '\0'; ++p) {
+            if (*p != '\\') {
+                this->value += *p;
+                continue;
+            }
+            ++p;
+            if (*p == '\0') {
+                this->value += '\\';
+                break;
+            }
+            switch (*p) {
+                case 'n': this->value += '\n'; break;  // 换行
+                case 't': this->value += '\t'; break;  // 水平制表
+                case 'r': this->value += '\r'; break;  // 回车
+                case 'b': this->value += '\b'; break;  // 退格
+                case 'f': this->value += '\f'; break;  // 换页
+                case 'v': this->value += '\v'; break;  // 垂直制表
+                case 'a': this->value += '\a'; break;  // 响铃
+                case '\\': this->value += '\\'; break; // 反斜杠
+                case '\"': this->value += '\"'; break; // 双引号
+                case '\'': this->value += '\''; break; // 单引号
+                case '0': this->value += '\0'; break;  // 空字符
+                default: this->value += *p; break;     // 未知的转义序列 (例如 "\z")
+            }
+        }
+    }
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
         os << "String: \"" << value << "\"\n";
