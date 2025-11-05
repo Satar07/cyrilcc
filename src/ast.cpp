@@ -1,4 +1,5 @@
 #include "ast.hpp"
+#include "type.hpp"
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -32,29 +33,36 @@ ASTNode_List *ast_list_append(ASTNode_List *list, ASTNode *node) {
 }
 
 // 类型
-ASTNode *ast_create_type_int() {
-    return new TypeSpecifierNode(TypeKind::INT);
+IRType *ast_create_type_int() {
+    return IRType::get_int();
 }
-ASTNode *ast_create_type_char() {
-    return new TypeSpecifierNode(TypeKind::CHAR);
+IRType *ast_create_type_char() {
+    return IRType::get_char();
+}
+IRType *ast_create_type_void() {
+    return IRType::get_void();
+}
+
+// 标识符声明
+ASTNode *ast_create_declarator_ident(char *name) {
+    return new IdentifierDeclarationNode(name);
+}
+ASTNode *ast_create_declarator_ptr(ASTNode *base_type) {
+    return new PointerDeclarationNode(base_type);
 }
 
 // 定义
-ASTNode *ast_create_definition_function(ASTNode *type, char *name, ASTNode_List *params,
+ASTNode *ast_create_definition_function(IRType *type, ASTNode *ident, ASTNode_List *params,
                                         ASTNode_List *body) {
-    ASTNode *node = new FunctionDefinitionNode(type, name, params, body);
+    ASTNode *node = new FunctionNode(type, ident, params, body);
     delete type;
     return node;
 }
-ASTNode *ast_create_declaration_parameter(ASTNode *type, char *name) {
-    auto t = static_cast<TypeSpecifierNode *>(type)->type;
-    delete type;
-    return new ParameterDeclarationNode(t, name);
+ASTNode *ast_create_declaration_parameter(IRType *type, ASTNode *ident) {
+    return new ParameterDeclarationNode(type, ident);
 }
-ASTNode *ast_create_definition_variable(char *name, ASTNode *initializer) {
-    return new VariableDefinitionNode(name, initializer);
-}
-ASTNode *ast_create_definition_variable_list(ASTNode *type, ASTNode_List *vars) {
+
+ASTNode *ast_create_definition_variable_list(IRType *type, ASTNode_List *vars) {
     return new VariableDeclarationListNode(type, vars);
 }
 
@@ -83,9 +91,6 @@ ASTNode *ast_create_statement_switch(ASTNode *cond, ASTNode_List *body) {
 }
 ASTNode *ast_create_statement_case(int cond) {
     return new CaseStatementNode(cond);
-}
-ASTNode *ast_create_statement_case(char cond) {
-    return new CaseStatementNode(static_cast<int>(cond));
 }
 ASTNode *ast_create_statement_default() {
     return new DefaultStatementNode();
@@ -138,6 +143,13 @@ ASTNode *ast_create_calculation_mul(ASTNode *l, ASTNode *r) {
 }
 ASTNode *ast_create_calculation_div(ASTNode *l, ASTNode *r) {
     return new BinaryOpNode(BinaryOpKind::DIV, l, r);
+}
+
+ASTNode *ast_create_unary_op_addr(ASTNode *expr) {
+    return new UnaryOpNode(UnaryOpKind::ADDR, expr);
+}
+ASTNode *ast_create_unary_op_deref(ASTNode *expr) {
+    return new UnaryOpNode(UnaryOpKind::DEREF, expr);
 }
 
 ASTNode *ast_create_immediate_integer(int val) {

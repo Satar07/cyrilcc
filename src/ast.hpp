@@ -1,5 +1,7 @@
 #pragma once
 
+#include "type.hpp" // 包含新的类型系统
+#include <cstddef>
 #include <iostream>
 #include <memory>
 #include <ostream>
@@ -9,6 +11,7 @@
 
 class ASTNode;
 
+// --- 列表容器 ---
 struct ASTNode_List {
     std::vector<std::unique_ptr<ASTNode>> nodes;
 };
@@ -16,21 +19,9 @@ struct ASTNode_List {
 // 全局根节点
 extern std::unique_ptr<ASTNode> root;
 
-// --- 类型定义 ---
-
-// 类型
-enum class TypeKind { INT, CHAR };
-
-// 二元操作 (用于计算和比较)
+// --- 枚举 ---
 enum class BinaryOpKind { ADD, SUB, MUL, DIV, LT, GT, LE, GE, EQ, NE };
-
-inline std::string type_kind_to_string(TypeKind type) {
-    switch (type) {
-        case TypeKind::INT: return "int";
-        case TypeKind::CHAR: return "char";
-        default: throw std::runtime_error("Unknown TypeKind");
-    }
-}
+enum class UnaryOpKind { ADDR, DEREF };
 
 inline std::string binary_op_kind_to_string(BinaryOpKind op) {
     switch (op) {
@@ -48,477 +39,443 @@ inline std::string binary_op_kind_to_string(BinaryOpKind op) {
     }
 }
 
-// AST 节点基类
+// --- AST 节点基类 ---
 class ASTNode {
   public:
     virtual ~ASTNode() = default;
-
     virtual void print(std::ostream &os, int indent = 0) const = 0;
 
-    // 辅助函数
   protected:
     void print_indent(std::ostream &os, int indent) const {
         for (int i = 0; i < indent; ++i) os << "  ";
     }
-
     void print_node_list(std::ostream &os, const ASTNode_List *list, int indent) const {
         if (list) {
             for (const auto &node : list->nodes) {
-                if (node) {
+                if (node)
                     node->print(os, indent);
-                } else {
+                else {
                     print_indent(os, indent);
-                    os << "(null node in list)" << std::endl;
+                    os << "(null node in list)\n";
                 }
             }
         } else {
             print_indent(os, indent);
-            os << "(null list)" << std::endl;
+            os << "(null list)\n";
         }
     }
 };
-// --- 顶层结构 ---
+
+// --- 顶层 ---
 class ProgramNode : public ASTNode {
   public:
-    std::unique_ptr<ASTNode_List> definitions; // 顶层定义列表
-
+    std::unique_ptr<ASTNode_List> definitions;
     ProgramNode(ASTNode_List *defs) : definitions(defs) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Program:" << std::endl;
+        os << "Program:\n";
         print_node_list(os, definitions.get(), indent + 1);
     }
 };
 
-// 类型说明符
-class TypeSpecifierNode : public ASTNode {
+// --- 声明 (用于类型构造) ---
+class DeclarationNode : public ASTNode {
   public:
-    TypeKind type;
+    std::string name;
+    DeclarationNode(std::string name) : name(name) {}
+    virtual IRType *build_type(IRType *base_type) = 0;
+};
 
-    TypeSpecifierNode(TypeKind t) : type(t) {}
+class IdentifierDeclarationNode : public DeclarationNode {
+  public:
+    IdentifierDeclarationNode(std::string name) : DeclarationNode(name) {}
+    IRType *build_type(IRType *base_type) override {
+        return base_type;
+    }
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Type: " << type_kind_to_string(type) << std::endl;
+        os << "IdentDecl: " << name << "\n";
     }
 };
 
-// --- 函数定义 ---
-
-// 函数定义
-class FunctionDefinitionNode : public ASTNode {
+class PointerDeclarationNode : public DeclarationNode {
   public:
-    TypeKind return_type;
+    std::unique_ptr<DeclarationNode> base_declaration;
+    PointerDeclarationNode(ASTNode *base_decl)
+        : DeclarationNode(""), base_declaration(dynamic_cast<DeclarationNode *>(base_decl)) {
+        if (!base_declaration)
+            throw std::runtime_error("PointerDeclarationNode received non-DeclarationNode");
+        this->name = base_declaration->name; // 名字从最内层冒泡上来
+    }
+    IRType *build_type(IRType *base_type) override {
+        IRType *base_ir_type = base_declaration->build_type(base_type);
+        return IRType::get_pointer(base_ir_type);
+    }
+    void print(std::ostream &os, int indent = 0) const override {
+        print_indent(os, indent);
+        os << "PointerDecl: *\n";
+        base_declaration->print(os, indent + 1);
+    }
+};
+
+// --- 函数 ---
+class FunctionNode : public ASTNode {
+  public:
+    IRType *return_type; // 最终的返回类型 (e.g., int*)
     std::string name;
     std::unique_ptr<ASTNode_List> params;
     std::unique_ptr<ASTNode_List> body;
 
-    FunctionDefinitionNode(ASTNode *return_type_node, const char *name, ASTNode_List *params,
-                           ASTNode_List *body)
-        : return_type(static_cast<TypeSpecifierNode *>(return_type_node)->type), name(name),
-          params(std::unique_ptr<ASTNode_List>(params)), body(std::unique_ptr<ASTNode_List>(body)) {
+    FunctionNode(IRType *type, ASTNode *ident, ASTNode_List *params, ASTNode_List *body)
+        : params(params), body(body) {
+        auto func_ret_decl = dynamic_cast<DeclarationNode *>(ident);
+        if (!func_ret_decl) throw std::runtime_error("FunctionNode received non-DeclarationNode");
+        this->name = func_ret_decl->name;
+        this->return_type = func_ret_decl->build_type(type); // 组合基础类型和声明
+        delete ident;                                        // 消耗掉临时的 ident 节点
     }
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "FunctionDefinition: " << name << " -> " << type_kind_to_string(return_type)
-           << std::endl;
-
+        os << "Function: " << name << " -> " << return_type->to_string() << "\n";
         print_indent(os, indent + 1);
-        os << "Parameters:" << std::endl;
+        os << "Params:\n";
         print_node_list(os, params.get(), indent + 2);
-
         print_indent(os, indent + 1);
-        os << "Body:" << std::endl;
+        os << "Body:\n";
         print_node_list(os, body.get(), indent + 2);
     }
 };
 
-// 函数参数声明（每一个参数）
 class ParameterDeclarationNode : public ASTNode {
   public:
-    TypeKind type;
+    IRType *type; // 最终的参数类型
     std::string name;
 
-    ParameterDeclarationNode(TypeKind type, const char *name) : type(type), name(name) {}
+    ParameterDeclarationNode(IRType *type, ASTNode *ident) {
+        auto param_decl = dynamic_cast<DeclarationNode *>(ident);
+        if (!param_decl)
+            throw std::runtime_error("ParameterDeclarationNode received non-DeclarationNode");
+        this->name = param_decl->name;
+        this->type = param_decl->build_type(type);
+        delete ident; // 消耗掉临时的 ident 节点
+    }
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Param: " << name << " (" << type_kind_to_string(type) << ")" << std::endl;
+        os << "Param: " << name << " (" << type->to_string() << ")\n";
     }
 };
 
-// -- 变量定义 ---
-
-// 每个变量的定义
+// --- 变量定义 ---
 class VariableDefinitionNode : public ASTNode {
   public:
     std::string name;
-    std::unique_ptr<ASTNode> initializer; // 初始化表达式 (nullptr 表示没有)
-
-    VariableDefinitionNode(const char *name, ASTNode *init = nullptr)
-        : name(name), initializer(init) {}
+    IRType *type; // 最终的变量类型
+    // (根据约束，移除 initializer)
+    VariableDefinitionNode(const std::string &name, IRType *type) : name(name), type(type) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Define var: " << name << std::endl;
-        if (initializer) {
-            print_indent(os, indent + 1);
-            os << "Initializer:" << std::endl;
-            initializer->print(os, indent + 2);
-        }
+        os << "Define var: " << name << " (" << type->to_string() << ")\n";
     }
 };
 
-// 变量定义列表
+// 变量定义列表 (e.g., int a, *b;)
 class VariableDeclarationListNode : public ASTNode {
   public:
-    std::unique_ptr<ASTNode> type;              // 类型 (TypeSpecifierNode)
-    std::unique_ptr<ASTNode_List> declarations; // 变量列表 (VariableDefinitionNode 列表)
+    std::unique_ptr<ASTNode_List> declarations; // 包含 VariableDefinitionNode 列表
 
-    VariableDeclarationListNode(ASTNode *type_node, ASTNode_List *vars)
-        : type(type_node), declarations(vars) {}
-
+    // 构造函数：将 DeclarationNode 列表转换为 VariableDefinitionNode 列表
+    VariableDeclarationListNode(IRType *base_type, ASTNode_List *decl_list)
+        : declarations(new ASTNode_List{}) {
+        for (auto &node_ptr : decl_list->nodes) {
+            DeclarationNode *decl = dynamic_cast<DeclarationNode *>(node_ptr.release());
+            if (!decl)
+                throw std::runtime_error("VariableDeclarationList received non-DeclarationNode");
+            std::string name = decl->name;
+            IRType *full_type = decl->build_type(base_type); // 构造完整类型
+            this->declarations->nodes.push_back(
+                std::make_unique<VariableDefinitionNode>(name, full_type));
+            delete decl; // 消耗掉临时的 decl 节点
+        }
+        delete decl_list; // 消耗掉临时的列表容器
+    }
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "VarDeclarations:" << std::endl;
-        type->print(os, indent + 1);
+        os << "VarDeclarations:\n";
         print_node_list(os, declarations.get(), indent + 1);
     }
 };
 
-// --- 语句块 ---
-
-// 语句基类
+// --- 语句 ---
 class StatementNode : public ASTNode {};
 
-// input 语句
 class InputStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> var; // 目标表达式
-
+    std::unique_ptr<ASTNode> var;
     InputStatementNode(ASTNode *var) : var(var) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Input:" << std::endl;
+        os << "Input:\n";
         var->print(os, indent + 1);
     }
 };
 
-// output 语句
 class OutputStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> var; // 目标表达式
-
+    std::unique_ptr<ASTNode> var;
     OutputStatementNode(ASTNode *var) : var(var) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Output:" << std::endl;
+        os << "Output:\n";
         var->print(os, indent + 1);
     }
 };
 
-// if 语句
 class IfStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> condition;        // 条件表达式
-    std::unique_ptr<ASTNode_List> then_branch; // then 分支语句块
-    std::unique_ptr<ASTNode_List> else_branch; // else 分支语句 nullptr 表示没有 else 分支
-
-    IfStatementNode(ASTNode *condition, ASTNode_List *if_block, ASTNode_List *else_block = nullptr)
-        : condition(condition), then_branch(if_block), else_branch(else_block) {}
+    std::unique_ptr<ASTNode> condition;
+    std::unique_ptr<ASTNode_List> then_branch;
+    std::unique_ptr<ASTNode_List> else_branch;
+    IfStatementNode(ASTNode *c, ASTNode_List *t, ASTNode_List *e = nullptr)
+        : condition(c), then_branch(t), else_branch(e) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "If:" << std::endl;
-
+        os << "If:\n";
+        condition->print(os, indent + 1);
         print_indent(os, indent + 1);
-        os << "Condition:" << std::endl;
-        condition->print(os, indent + 2);
-
-        print_indent(os, indent + 1);
-        os << "Then:" << std::endl;
+        os << "Then:\n";
         print_node_list(os, then_branch.get(), indent + 2);
-
         if (else_branch) {
             print_indent(os, indent + 1);
-            os << "Else:" << std::endl;
+            os << "Else:\n";
             print_node_list(os, else_branch.get(), indent + 2);
         }
     }
 };
 
-// while 语句
 class WhileStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> condition; // 条件表达式
-    std::unique_ptr<ASTNode_List> body; // 循环体语句块
-
-    WhileStatementNode(ASTNode *condition, ASTNode_List *body) : condition(condition), body(body) {}
+    std::unique_ptr<ASTNode> condition;
+    std::unique_ptr<ASTNode_List> body;
+    WhileStatementNode(ASTNode *c, ASTNode_List *b) : condition(c), body(b) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "While:" << std::endl;
-
+        os << "While:\n";
+        condition->print(os, indent + 1);
         print_indent(os, indent + 1);
-        os << "Condition:" << std::endl;
-        condition->print(os, indent + 2);
-
-        print_indent(os, indent + 1);
-        os << "Body:" << std::endl;
+        os << "Body:\n";
         print_node_list(os, body.get(), indent + 2);
     }
 };
 
-// for 语句
 class ForStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> initialization; // 初始化表达式
-    std::unique_ptr<ASTNode> condition;      // 条件表达式
-    std::unique_ptr<ASTNode> increment;      // 增量表达式
-    std::unique_ptr<ASTNode_List> body;      // 循环体语句块
-
-    ForStatementNode(ASTNode *init, ASTNode *cond, ASTNode *inc, ASTNode_List *body)
-        : initialization(init), condition(cond), increment(inc), body(body) {}
+    std::unique_ptr<ASTNode> initialization, condition, increment;
+    std::unique_ptr<ASTNode_List> body;
+    ForStatementNode(ASTNode *i, ASTNode *c, ASTNode *inc, ASTNode_List *b)
+        : initialization(i), condition(c), increment(inc), body(b) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "For:" << std::endl;
-
+        os << "For:\n";
         print_indent(os, indent + 1);
-        os << "Initialization:" << std::endl;
-        if (initialization)
-            initialization->print(os, indent + 2);
-        else
-            print_indent(os, indent + 2), os << "(empty)" << std::endl;
-
+        os << "Init:\n";
+        if (initialization) initialization->print(os, indent + 2);
         print_indent(os, indent + 1);
-        os << "Condition:" << std::endl;
-        if (condition)
-            condition->print(os, indent + 2);
-        else
-            print_indent(os, indent + 2), os << "(empty)" << std::endl;
-
+        os << "Cond:\n";
+        if (condition) condition->print(os, indent + 2);
         print_indent(os, indent + 1);
-        os << "Increment:" << std::endl;
-        if (increment)
-            increment->print(os, indent + 2);
-        else
-            print_indent(os, indent + 2), os << "(empty)" << std::endl;
-
+        os << "Inc:\n";
+        if (increment) increment->print(os, indent + 2);
         print_indent(os, indent + 1);
-        os << "Body:" << std::endl;
+        os << "Body:\n";
         print_node_list(os, body.get(), indent + 2);
     }
 };
 
-// switch 语句
 class SwitchStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> condition; // 条件表达式
-    std::unique_ptr<ASTNode_List> body; // switch 语句块
-
-    SwitchStatementNode(ASTNode *condition, ASTNode_List *body)
-        : condition(condition), body(body) {}
+    std::unique_ptr<ASTNode> condition;
+    std::unique_ptr<ASTNode_List> body;
+    SwitchStatementNode(ASTNode *c, ASTNode_List *b) : condition(c), body(b) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Switch:" << std::endl;
-
+        os << "Switch:\n";
+        condition->print(os, indent + 1);
         print_indent(os, indent + 1);
-        os << "Condition:" << std::endl;
-        condition->print(os, indent + 2);
-
-        print_indent(os, indent + 1);
-        os << "Body:" << std::endl;
+        os << "Body:\n";
         print_node_list(os, body.get(), indent + 2);
     }
 };
 
-// case 语句
 class CaseStatementNode : public StatementNode {
   public:
     int case_value;
-
-    CaseStatementNode(int value) : case_value(value) {}
+    CaseStatementNode(int v) : case_value(v) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Case: " << case_value << std::endl;
+        os << "Case: " << case_value << "\n";
     }
 };
 
-// default 语句
 class DefaultStatementNode : public StatementNode {
   public:
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Default" << std::endl;
+        os << "Default\n";
     }
 };
 
-// case 语句块
 class CaseBlockStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode_List> body; // case 语句块
-
-    CaseBlockStatementNode(ASTNode_List *body) : body(body) {}
+    std::unique_ptr<ASTNode_List> body;
+    CaseBlockStatementNode(ASTNode_List *b) : body(b) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "CaseBlock:" << std::endl;
+        os << "CaseBlock:\n";
         print_node_list(os, body.get(), indent + 1);
     }
 };
 
-// return 语句
 class ReturnStatementNode : public StatementNode {
   public:
-    std::unique_ptr<ASTNode> value; // 返回值表达式
-
-    ReturnStatementNode(ASTNode *value) : value(value) {}
+    std::unique_ptr<ASTNode> value;
+    ReturnStatementNode(ASTNode *v) : value(v) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Return:" << std::endl;
-        value->print(os, indent + 1);
+        os << "Return:\n";
+        if (value) value->print(os, indent + 1);
     }
 };
 
-// Break 语句
 class BreakStatementNode : public StatementNode {
   public:
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Break" << std::endl;
+        os << "Break\n";
     }
 };
 
-// Continue 语句
 class ContinueStatementNode : public StatementNode {
   public:
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Continue" << std::endl;
+        os << "Continue\n";
     }
 };
 
 // --- 表达式 ---
-
-// 表达式基类
 class ExpressionNode : public ASTNode {};
 
-// 立即数 整数
 class IntegerLiteralNode : public ExpressionNode {
   public:
     int value;
-
     IntegerLiteralNode(int v) : value(v) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Int: " << value << std::endl;
+        os << "Int: " << value << "\n";
     }
 };
 
-// 立即数 字符
 class CharacterLiteralNode : public ExpressionNode {
   public:
     char value;
-
     CharacterLiteralNode(char v) : value(v) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Char: '" << value << "'" << std::endl;
+        os << "Char: '" << value << "'\n";
     }
 };
 
-// 立即数：字符串
 class StringLiteralNode : public ExpressionNode {
   public:
     std::string value;
-
     StringLiteralNode(const char *v) : value(v) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "String: \"" << value << "\"" << std::endl;
+        os << "String: \"" << value << "\"\n";
     }
 };
 
-// 二元操作
 class BinaryOpNode : public ExpressionNode {
   public:
     BinaryOpKind op;
-    std::unique_ptr<ASTNode> left;
-    std::unique_ptr<ASTNode> right;
-
-    BinaryOpNode(BinaryOpKind op, ASTNode *left, ASTNode *right)
-        : op(op), left(left), right(right) {}
+    std::unique_ptr<ASTNode> left, right;
+    BinaryOpNode(BinaryOpKind o, ASTNode *l, ASTNode *r) : op(o), left(l), right(r) {}
     void print(std::ostream &os, int indent = 0) const override {
-        left->print(os, indent + 1);
         print_indent(os, indent);
-        os << binary_op_kind_to_string(op) << std::endl;
+        os << "BinOp: " << binary_op_kind_to_string(op) << "\n";
+        left->print(os, indent + 1);
         right->print(os, indent + 1);
     }
 };
 
-// 赋值表达式
+class UnaryOpNode : public ExpressionNode {
+  public:
+    UnaryOpKind op;
+    std::unique_ptr<ASTNode> operand;
+    UnaryOpNode(UnaryOpKind o, ASTNode *opd) : op(o), operand(opd) {}
+    void print(std::ostream &os, int indent = 0) const override {
+        print_indent(os, indent);
+        os << "UnaryOp: " << (op == UnaryOpKind::ADDR ? "&" : "*") << "\n";
+        operand->print(os, indent + 1);
+    }
+};
+
 class AssignmentNode : public ExpressionNode {
   public:
-    std::unique_ptr<ASTNode> lvalue; // 左值 (应该是 VariableReferenceNode)
-    std::unique_ptr<ASTNode> rvalue; // 右值 (任意表达式)
-
+    std::unique_ptr<ASTNode> lvalue, rvalue;
     AssignmentNode(ASTNode *l, ASTNode *r) : lvalue(l), rvalue(r) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "Assign:" << std::endl;
+        os << "Assign:\n";
         lvalue->print(os, indent + 1);
         rvalue->print(os, indent + 1);
     }
 };
 
-// --- 变量调用 ---
-
-// 变量引用 (在表达式中使用)
 class VariableReferenceNode : public ExpressionNode {
   public:
-    std::string name; // 变量名
-
+    std::string name;
     VariableReferenceNode(const char *n) : name(n) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "VarRef: " << name << std::endl;
+        os << "VarRef: " << name << "\n";
     }
 };
 
-// --- 函数调用 ---
-
-// 函数调用
 class FunctionCallNode : public ExpressionNode {
   public:
     std::string name;
-    std::unique_ptr<ASTNode_List> args; // 参数列表
-
-    FunctionCallNode(const char *name, ASTNode_List *args) : name(name), args(args) {}
+    std::unique_ptr<ASTNode_List> args;
+    FunctionCallNode(const char *n, ASTNode_List *a) : name(n), args(a) {}
     void print(std::ostream &os, int indent = 0) const override {
         print_indent(os, indent);
-        os << "FuncCall: " << name << std::endl;
+        os << "FuncCall: " << name << "\n";
         print_indent(os, indent + 1);
-        os << "Args:" << std::endl;
+        os << "Args:\n";
         print_node_list(os, args.get(), indent + 2);
     }
 };
 
-// -------------------------------------------------
-
-// 顶层
+// --- C 接口声明 (供 yacc/bison 使用) ---
+extern "C" {
 void ast_setup_program(ASTNode_List *list);
-
-// 列表操作
 ASTNode_List *ast_list_create_empty();
 ASTNode_List *ast_list_create(ASTNode *node);
 ASTNode_List *ast_list_append(ASTNode_List *list, ASTNode *node);
 
-// 类型
-ASTNode *ast_create_type_int();
-ASTNode *ast_create_type_char();
+IRType *ast_create_type_int();
+IRType *ast_create_type_char();
+IRType *ast_create_type_void();
 
-// 定义
-ASTNode *
-ast_create_definition_function(ASTNode *type, char *name, ASTNode_List *params, ASTNode_List *body);
-ASTNode *ast_create_declaration_parameter(ASTNode *type, char *name);
-ASTNode *ast_create_definition_variable(char *name, ASTNode *initializer);
-ASTNode *ast_create_definition_variable_list(ASTNode *type, ASTNode_List *vars);
+ASTNode *ast_create_declarator_ident(char *name);
+ASTNode *ast_create_declarator_ptr(ASTNode *base_type);
 
-// 语句
+ASTNode *ast_create_definition_function(IRType *type, ASTNode *ident, ASTNode_List *params,
+                                        ASTNode_List *body);
+ASTNode *ast_create_declaration_parameter(IRType *type, ASTNode *name);
+
+ASTNode *ast_create_definition_variable_list(IRType *type, ASTNode_List *vars);
+
 ASTNode *ast_create_statement_input(ASTNode *expr);
 ASTNode *ast_create_statement_output(ASTNode *expr);
 ASTNode *ast_create_statement_if(ASTNode *cond, ASTNode_List *body);
@@ -528,14 +485,12 @@ ASTNode *ast_create_statement_while(ASTNode *cond, ASTNode_List *body);
 ASTNode *ast_create_statement_for(ASTNode *init, ASTNode *cond, ASTNode *inc, ASTNode_List *body);
 ASTNode *ast_create_statement_switch(ASTNode *cond, ASTNode_List *body);
 ASTNode *ast_create_statement_case(int cond);
-ASTNode *ast_create_statement_case(char cond); // 字符 case? 也许可行
 ASTNode *ast_create_statement_default();
 ASTNode *ast_create_statement_case_block(ASTNode_List *body);
 ASTNode *ast_create_statement_return(ASTNode *expr);
 ASTNode *ast_create_statement_break();
 ASTNode *ast_create_statement_continue();
 
-// 表达式
 ASTNode *ast_create_assignment(ASTNode *var, ASTNode *expr);
 
 ASTNode *ast_create_comparison_lt(ASTNode *l, ASTNode *r);
@@ -550,12 +505,13 @@ ASTNode *ast_create_calculation_sub(ASTNode *l, ASTNode *r);
 ASTNode *ast_create_calculation_mul(ASTNode *l, ASTNode *r);
 ASTNode *ast_create_calculation_div(ASTNode *l, ASTNode *r);
 
+ASTNode *ast_create_unary_op_addr(ASTNode *expr);
+ASTNode *ast_create_unary_op_deref(ASTNode *expr);
+
 ASTNode *ast_create_immediate_integer(int val);
 ASTNode *ast_create_immediate_character(int val);
 ASTNode *ast_create_immediate_string(char *val);
 
-// 变量调用
 ASTNode *ast_create_variable_reference(char *name);
-
-// 函数调用
 ASTNode *ast_create_function_call(char *name, ASTNode_List *args);
+}

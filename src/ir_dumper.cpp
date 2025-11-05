@@ -9,18 +9,6 @@
 
 // --- IR Dumper ---
 
-// 辅助函数：打印类型
-static std::string type_to_string(IRType type) {
-    switch (type) {
-        case IRType::VOID: return "void";
-        case IRType::I32: return "i32";
-        case IRType::I8: return "i8";
-        case IRType::PTR: return "ptr";
-        case IRType::LABEL: return "label";
-        default: throw std::runtime_error("Unknown IRType in dumper");
-    }
-}
-
 // 辅助函数：打印操作数
 static std::string operand_to_string(const IROperand &op) {
     std::stringstream ss;

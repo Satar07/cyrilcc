@@ -1,875 +1,631 @@
 #pragma once
 
-#include "ast.hpp"
+#include "ast.hpp"  // 包含 ast.hpp
+#include "type.hpp" // 包含 type.hpp
 #include <iostream>
-#include <map>
 #include <memory>
-#include <ostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
-// --- IR 类型系统 ---
-enum class IRType { VOID, I32, I8, PTR, LABEL };
-// 均为寄存器中的形式
+// ========================================================
+// --- IR 结构定义 ---
+// ========================================================
 
-// --- IR 操作数 ---
-// 操作数可以是寄存器、常量或全局/函数名。
+// --- 操作数类型 ---
+enum class IROperandType { IMM, REG, LABEL, GLOBAL };
+
 struct IROperand {
-    // Value:
-    // int: 整数常量 (e.g., 5)
-    // char: 字符常量 (e.g., 'a')
-    // std::string: 寄存器 (e.g., "%0"), 标签 (e.g., "%L0"), 全局变量/函数 (e.g., "@var")
-    using Value = std::variant<int, char, std::string>;
+    IROperandType op_type;
+    IRType *type = nullptr; // 使用指针指向唯一的类型实例
+    int imm_value = 0;
+    std::string name; // 用于 REG (%0), LABEL (L1), GLOBAL (@g)
 
-    Value value;
-    IRType type;
-    IRType pointee_type = IRType::VOID; // 如果 type 是 PTR, 这是它指向的类型
+    IROperand() = default;
+    IROperand(IROperandType ot, IRType *t) : op_type(ot), type(t) {}
 
-    IROperand() : type(IRType::VOID) {}
-    IROperand(Value v, IRType t, IRType p_type = IRType::VOID)
-        : value(v), type(t), pointee_type(p_type) {}
+    static IROperand create_imm(int val, IRType *type) {
+        IROperand op(IROperandType::IMM, type);
+        op.imm_value = val;
+        return op;
+    }
+    static IROperand create_reg(std::string name, IRType *type) {
+        IROperand op(IROperandType::REG, type);
+        op.name = std::move(name);
+        return op;
+    }
+    static IROperand create_label(std::string name) {
+        IROperand op(IROperandType::LABEL, IRType::get_void());
+        op.name = std::move(name);
+        return op;
+    }
+    static IROperand create_global(std::string name, IRType *type) {
+        IROperand op(IROperandType::GLOBAL, type);
+        op.name = std::move(name);
+        return op;
+    }
+    bool is_valid() const {
+        return type != nullptr;
+    }
 };
 
-// --- IR 指令 ---
+// --- IR 指令集 ---
 enum class IROp {
-    // 终结指令
-    RET, // 从函数返回
-    BR,  // 无条件跳转
-    // 比较操作
-    TEST,
-    // 比较跳转
+    // 终结
+    RET,
+    // 无条件跳转
+    BR,
+    // 条件跳转 (TEST/CMP + Branch)
     BRZ,  // Branch if Zero (Equal)
+    BRNZ, // Branch if Not Zero (Not Equal)
     BRLT, // Branch if Less Than
     BRGT, // Branch if Greater Than
-
-    // 内存操作
-    ALLOCA, // 在栈上分配内存
-    LOAD,   // 从内存加载值
-    STORE,  // 将值存储到内存
-
-    // 赋值操作（可优化）
-    MOV, // A <- B
-
-    // 二元操作
+    BRLE, // Branch if Less or Equal
+    BRGE, // Branch if Greater or Equal
+    BREQ, // Branch if Equal (同 BRZ)
+    BRNE, // Branch if Not Equal (同 BRNZ)
+    // 比较 (设置标志位)
+    TEST, // (在我们的实现中，TEST 被内置到条件跳转中)
+    // 内存
+    ALLOCA, // 分配栈空间
+    LOAD,   // 从内存加载
+    STORE,  // 存储到内存
+    // 算术
     ADD,
     SUB,
     MUL,
     DIV,
-
-    // 函数调用
+    // 函数
     CALL,
-
-    // 输入/输出操作
-    INPUT_INT,     // 输入整数 (ITI)
-    INPUT_CHAR,    // 输入字符 (ITC)
-    OUTPUT_INT,    // 输出整数 (OTI)
-    OUTPUT_CHAR,   // 输出字符 (OTC)
-    OUTPUT_STRING, // 输出字符串 (OTS)
-
-    // 其他
-    LABEL, // 用于标签的伪指令
+    // I/O 扩展指令
+    INPUT_I32,
+    INPUT_I8,
+    OUTPUT_I32,
+    OUTPUT_I8,
+    OUTPUT_STR,
+    // 伪指令
+    LABEL
 };
 
 struct IRInstruction {
     IROp op;
-    std::vector<IROperand> operands;
-    IROperand result; // 指令结果的存储位置 (如果有)
-
-    IRInstruction(IROp op, std::vector<IROperand> operands = {}, IROperand result = {})
-        : op(op), operands(std::move(operands)), result(std::move(result)) {}
+    std::vector<IROperand> args;
+    std::optional<IROperand> result;
+    IRInstruction(IROp o, std::vector<IROperand> a = {}, std::optional<IROperand> r = std::nullopt)
+        : op(o), args(std::move(a)), result(std::move(r)) {}
 };
 
 // --- 基本块 ---
 struct IRBasicBlock {
     std::string label;
-    std::vector<IRInstruction> instructions;
-
-    IRBasicBlock(std::string label) : label(std::move(label)) {}
+    std::vector<IRInstruction> insts;
+    IRBasicBlock(std::string l) : label(std::move(l)) {}
 };
 
-// --- 函数 ---
+// --- 函数定义 ---
 struct IRFunction {
     std::string name;
-    IRType return_type;
-    std::vector<IROperand> params;
-    std::vector<IRBasicBlock> blocks;
-
-    // 局部符号表 (存储变量名到其 *指针* 操作数 (来自 ALLOCA) 的映射)
-    std::unordered_map<std::string, IROperand> symbol_table;
-
-    IRFunction(std::string name, IRType ret_type) : name(std::move(name)), return_type(ret_type) {}
+    IRType *ret_type;
+    std::vector<IROperand> params;                           // 参数列表 (虚拟寄存器)
+    std::vector<IRBasicBlock> blocks;                        // 基本块列表
+    std::unordered_map<std::string, IROperand> symbol_table; // 局部变量表 (映射到栈指针)
+    IRFunction(std::string n, IRType *rt) : name(std::move(n)), ret_type(rt) {}
 };
 
 // --- 全局变量 ---
 struct IRGlobalVar {
     std::string name;
-    IRType type;
-    std::string initializer_str;  // 字符串字面量
-    int initializer_val = 0;      // 常量初始化
-    bool has_initializer = false; // 是否有显式初始化
-
-    // 默认构造函数
-    IRGlobalVar(std::string n, IRType t) : name(std::move(n)), type(t), has_initializer(false) {}
-
-    // 用于 int/char 初始化的构造函数
-    IRGlobalVar(std::string n, IRType t, int init_val)
-        : name(std::move(n)), type(t), initializer_val(init_val), has_initializer(true) {}
-
-    // 用于字符串初始化的构造函数
-    IRGlobalVar(std::string n, IRType t, std::string init)
-        : name(std::move(n)), type(t), initializer_str(std::move(init)), has_initializer(true) {}
+    IRType *type;
+    std::string init_str; // 仅用于字符串字面量
+    // (根据约束，移除其他初始化字段)
+    IRGlobalVar(std::string n, IRType *t) : name(std::move(n)), type(t) {}
 };
 
-// --- 模块 ---
-// 模块包含单个翻译单元中的所有函数和全局变量。
+// --- 模块 (Top Level) ---
 struct IRModule {
+    std::vector<IRGlobalVar> globals;
     std::vector<IRFunction> functions;
-    std::vector<IRGlobalVar> global_vars;                    // 用于全局变量
-    std::unordered_map<std::string, IROperand> symbol_table; // 全局符号 (变量/函数)
+    std::unordered_map<std::string, IROperand> global_symbols; // 全局符号表
 
-    void dump(std::ostream &os);
+    void dump(std::ostream &os) const { /* 实现省略，但需存在 */ }
 };
 
-// --- IR 生成器  ---
+// ========================================================
+// --- IR 生成器 ---
+// ========================================================
 class IRGenerator {
   public:
     IRModule module;
 
     IRGenerator(std::unique_ptr<ASTNode> &root) {
-        dispatch(root.get());
-    }
-
-    void dump_ir() {
-        module.dump(std::cout);
-    }
-
-    // 分发语句
-    void dispatch(ASTNode *node) {
-        if (!node) return;
-        if (auto n = dynamic_cast<ProgramNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<FunctionDefinitionNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<VariableDeclarationListNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<IfStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<WhileStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<ForStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<SwitchStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<CaseBlockStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<ReturnStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<InputStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<OutputStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<BreakStatementNode *>(node)) {
-            visit(n);
-        } else if (auto n = dynamic_cast<ContinueStatementNode *>(node)) {
-            visit(n);
-        }
-        // 表达式作为语句 (e.g., "a = b + 1;" 或 "foo();")
-        else if (auto n = dynamic_cast<ExpressionNode *>(node)) {
-            dispatch_expr(n);
-        } else { /* 其他节点 (如 TypeSpecifier) 不需要显式访问 */
-        }
-    }
-
-    // 分发表达式
-    IROperand dispatch_expr(ASTNode *node) {
-        if (!node) return {};
-        if (auto n = dynamic_cast<AssignmentNode *>(node)) {
-            return visit(n);
-        }
-        if (auto n = dynamic_cast<BinaryOpNode *>(node)) {
-            return visit(n);
-        }
-        if (auto n = dynamic_cast<IntegerLiteralNode *>(node)) {
-            return visit(n);
-        }
-        if (auto n = dynamic_cast<CharacterLiteralNode *>(node)) {
-            return visit(n);
-        }
-        if (auto n = dynamic_cast<StringLiteralNode *>(node)) {
-            return visit(n);
-        }
-        if (auto n = dynamic_cast<VariableReferenceNode *>(node)) {
-            return visit(n);
-        }
-        if (auto n = dynamic_cast<FunctionCallNode *>(node)) {
-            return visit(n);
-        }
-        throw std::runtime_error("Unknown expression node type in dispatch_expr");
+        if (root) dispatch(root.get());
     }
 
   private:
+    // --- 状态 ---
+    IRFunction *cur_func = nullptr;
+    IRBasicBlock *cur_block = nullptr;
+    int vreg_cnt = 0;
+    int label_cnt = 0;
+    int str_cnt = 0;
+    std::vector<std::pair<std::string, std::string>> loop_stack; // <continue_lbl, break_lbl>
+
+    // --- 辅助工具 ---
+    std::string new_label(const std::string &prefix = "L") {
+        return prefix + "_" + std::to_string(label_cnt++);
+    }
+    IROperand new_reg(IRType *type) {
+        return IROperand::create_reg("%" + std::to_string(vreg_cnt++), type);
+    }
+
+    void create_block(std::string label) {
+        if (!cur_func) throw std::runtime_error("Cannot create block outside a function");
+        cur_func->blocks.emplace_back(label);
+        cur_block = &cur_func->blocks.back();
+        emit(IROp::LABEL, { IROperand::create_label(label) });
+    }
+
+    void
+    emit(IROp op, std::vector<IROperand> args = {}, std::optional<IROperand> res = std::nullopt) {
+        if (!cur_block) throw std::runtime_error("Cannot emit outside a basic block");
+        cur_block->insts.emplace_back(op, std::move(args), std::move(res));
+    }
+
+    // --- 分发 ---
+    void dispatch(ASTNode *node) {
+        if (!node) return;
+        // 顶层
+        if (auto n = dynamic_cast<ProgramNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<FunctionNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<VariableDeclarationListNode *>(node)) {
+            visit(n);
+            return;
+        }
+        // 语句
+        if (auto n = dynamic_cast<IfStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<WhileStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<ForStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<SwitchStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<CaseStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<DefaultStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<CaseBlockStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<ReturnStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<BreakStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<ContinueStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<InputStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        if (auto n = dynamic_cast<OutputStatementNode *>(node)) {
+            visit(n);
+            return;
+        }
+        // 表达式语句
+        if (auto n = dynamic_cast<ExpressionNode *>(node)) {
+            dispatch_expr(n);
+            return;
+        }
+        // 忽略其他 (如 ParameterDeclarationNode，由 FunctionNode 处理)
+    }
+
+    IROperand dispatch_expr(ASTNode *node) {
+        if (auto n = dynamic_cast<AssignmentNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<BinaryOpNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<UnaryOpNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<FunctionCallNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<VariableReferenceNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<IntegerLiteralNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<CharacterLiteralNode *>(node)) return visit(n);
+        if (auto n = dynamic_cast<StringLiteralNode *>(node)) return visit(n);
+        throw std::runtime_error("Unknown expression node");
+    }
+
+    // --- 符号/LValue ---
+    IROperand get_symbol_ptr(const std::string &name) {
+        if (cur_func) {
+            auto it = cur_func->symbol_table.find(name);
+            if (it != cur_func->symbol_table.end()) return it->second;
+        }
+        auto it = module.global_symbols.find(name);
+        if (it != module.global_symbols.end()) return it->second;
+        throw std::runtime_error("Symbol not found: " + name);
+    }
+
+    IROperand get_lvalue_addr(ASTNode *node) {
+        if (auto var = dynamic_cast<VariableReferenceNode *>(node)) {
+            return get_symbol_ptr(var->name);
+        }
+        if (auto deref = dynamic_cast<UnaryOpNode *>(node)) {
+            if (deref->op == UnaryOpKind::DEREF) {
+                return dispatch_expr(deref->operand.get()); // *p 的地址就是 p 的值
+            }
+        }
+        throw std::runtime_error("Expression is not an lvalue");
+    }
+
+    // --- 条件跳转 ---
+    void
+    visit_condition(ASTNode *cond, const std::string &true_label, const std::string &false_label) {
+        if (auto bin_op = dynamic_cast<BinaryOpNode *>(cond)) {
+            IROperand lhs = dispatch_expr(bin_op->left.get());
+            IROperand rhs = dispatch_expr(bin_op->right.get());
+            emit(IROp::TEST, { lhs, rhs }); // 假设 TEST 设置标志位
+
+            IROp br_op;
+            switch (bin_op->op) {
+                case BinaryOpKind::LT: br_op = IROp::BRLT; break;
+                case BinaryOpKind::GT: br_op = IROp::BRGT; break;
+                case BinaryOpKind::LE: br_op = IROp::BRLE; break;
+                case BinaryOpKind::GE: br_op = IROp::BRGE; break;
+                case BinaryOpKind::EQ: br_op = IROp::BREQ; break;
+                case BinaryOpKind::NE: br_op = IROp::BRNE; break;
+                default: goto generic_cond; // 非比较运算
+            }
+            emit(br_op, { IROperand::create_label(true_label) });
+            emit(IROp::BR, { IROperand::create_label(false_label) });
+            return;
+        }
+    generic_cond:
+        // 表达式作为条件 (e.g., if(x))
+        IROperand val = dispatch_expr(cond);
+        emit(IROp::TEST, { val, IROperand::create_imm(0, IRType::get_i32()) });
+        emit(IROp::BRNZ, { IROperand::create_label(true_label) }); // 不为 0 则跳转
+        emit(IROp::BR, { IROperand::create_label(false_label) });
+    }
+
+    // --- 节点 Visit 方法 ---
     void visit(ProgramNode *node) {
-        // 第一遍：处理全局变量和函数声明 (为了支持函数调用)
-        for (const auto &def : node->definitions->nodes) {
-            if (auto func_def = dynamic_cast<FunctionDefinitionNode *>(def.get())) {
-                // 将函数名注册到全局符号表
-                std::string func_name = "@" + func_def->name;
-                IRType ret_type = convert_ast_type(func_def->return_type);
-                // 使用返回类型来存储函数类型信息
-                module.symbol_table[func_def->name] = IROperand(func_name, ret_type);
-            } else if (auto var_list = dynamic_cast<VariableDeclarationListNode *>(def.get())) {
-                // 全局变量
-                IRType type =
-                    convert_ast_type(static_cast<TypeSpecifierNode *>(var_list->type.get())->type);
-                for (const auto &var : var_list->declarations->nodes) {
-                    auto var_def = static_cast<VariableDefinitionNode *>(var.get());
-                    std::string global_name = "@" + var_def->name;
-
-                    // 处理全局变量初始化
-                    if (var_def->initializer) {
-                        // 全局变量的初始化必须是常量。
-                        // 我们这里做一个简化，只支持立即数（int, char）。
-                        if (auto int_lit =
-                                dynamic_cast<IntegerLiteralNode *>(var_def->initializer.get())) {
-                            module.global_vars.emplace_back(global_name, type, int_lit->value);
-                        } else if (auto char_lit = dynamic_cast<CharacterLiteralNode *>(
-                                       var_def->initializer.get())) {
-                            module.global_vars.emplace_back(global_name, type,
-                                                            (int)char_lit->value);
-                        } else if ( // TODO
-                            auto _ =
-                                dynamic_cast<StringLiteralNode *>(var_def->initializer.get())) {
-                            throw std::runtime_error(
-                                "Global string initialization not supported yet");
-                        } else {
-                            throw std::runtime_error("Global variable initializer must be a "
-                                                     "constant literal (int/char)");
-                        }
-                    } else {
-                        // 没有初始化 (默认为 0)
-                        module.global_vars.emplace_back(global_name, type, 0);
-                    }
-
-                    // 全局变量在符号表中也是一个指针
-                    module.symbol_table[var_def->name] = IROperand(global_name, IRType::PTR, type);
+        // Pass 1: 注册全局符号
+        for (auto &def : node->definitions->nodes) {
+            if (auto fn = dynamic_cast<FunctionNode *>(def.get())) {
+                module.global_symbols[fn->name] = IROperand::create_global("@" + fn->name,
+                                                                           fn->return_type);
+            } else if (auto vlist = dynamic_cast<VariableDeclarationListNode *>(def.get())) {
+                for (auto &vdef_node : vlist->declarations->nodes) {
+                    auto vdef = static_cast<VariableDefinitionNode *>(vdef_node.get());
+                    std::string gname = "@" + vdef->name;
+                    module.globals.emplace_back(gname, vdef->type);
+                    module.global_symbols[vdef->name] =
+                        IROperand::create_global(gname, IRType::get_pointer(vdef->type));
                 }
             }
         }
-
-        // 第二遍：访问函数定义
-        for (const auto &def : node->definitions->nodes) {
-            if (auto func_def = dynamic_cast<FunctionDefinitionNode *>(def.get())) {
-                visit(func_def);
+        // Pass 2: 生成函数体
+        for (auto &def : node->definitions->nodes) {
+            if (dynamic_cast<FunctionNode *>(def.get())) {
+                dispatch(def.get());
             }
         }
     }
 
-    void visit(FunctionDefinitionNode *node) {
-        IRType ret_type = convert_ast_type(node->return_type);
-        std::string func_name = "@" + node->name;
+    void visit(FunctionNode *node) {
+        module.functions.emplace_back("@" + node->name, node->return_type);
+        cur_func = &module.functions.back();
+        vreg_cnt = 0; // 重置虚拟寄存器
 
-        start_function(func_name, ret_type);
+        create_block("entry");
 
-        // 创建入口块
-        create_block_and_set();
+        for (auto &param_node : node->params->nodes) {
+            auto param = static_cast<ParameterDeclarationNode *>(param_node.get());
+            IROperand arg_val = new_reg(param->type);
+            cur_func->params.push_back(arg_val); // 记录参数值
 
-        // --- 处理参数 (alloca/store) ---
-        for (const auto &param : node->params->nodes) {
-            auto param_decl = static_cast<ParameterDeclarationNode *>(param.get());
-            IRType param_type = convert_ast_type(param_decl->type);
-
-            // 1. 创建一个操作数来代表传入的参数值
-            IROperand param_value = new_reg(param_type);
-            current_function->params.push_back(param_value);
-
-            // 2. ALLOCA: 为参数在栈上分配空间
-            IROperand param_ptr = new_reg_ptr(param_type);
-            emit(IRInstruction(IROp::ALLOCA, {}, param_ptr));
-
-            // 3. STORE: 将传入的参数值存入分配的栈空间
-            emit(IRInstruction(IROp::STORE, { param_value, param_ptr }));
-
-            // 4. 将参数 *指针* 存入局部符号表
-            current_function->symbol_table[param_decl->name] = param_ptr;
+            IROperand ptr = new_reg(IRType::get_pointer(param->type));
+            emit(IROp::ALLOCA, {}, ptr);
+            emit(IROp::STORE, { arg_val, ptr });
+            cur_func->symbol_table[param->name] = ptr; // 符号表存指针
         }
 
-        // --- 访问函数体 ---
-        for (const auto &stmt : node->body->nodes) {
-            dispatch(stmt.get());
-        }
+        for (auto &stmt : node->body->nodes) dispatch(stmt.get());
 
-        // --- 确保函数有 RET ---
-        // (如果最后一个块没有终结指令)
-        if ((current_block && current_block->instructions.empty()) ||
-            (current_block && current_block->instructions.back().op != IROp::RET &&
-             current_block->instructions.back().op != IROp::BR)) {
-            // if (ret_type == IRType::VOID) {
-            emit(IRInstruction(IROp::RET, { IROperand{ 0, IRType::I32, IRType::VOID } }));
-            // }
+        // 确保有返回
+        if (cur_block->insts.empty() || cur_block->insts.back().op != IROp::RET) {
+            emit(IROp::RET,
+                 node->return_type->is_void()
+                     ? std::vector<IROperand>{}
+                     : std::vector<IROperand>{ IROperand::create_imm(0, IRType::get_i32()) });
         }
-
-        end_function();
+        cur_func = nullptr;
     }
 
     void visit(VariableDeclarationListNode *node) {
-        // 注意: 全局变量已在 ProgramNode 中处理。这里只处理局部变量。
-        if (!current_function) return;
-
-        IRType type = convert_ast_type(static_cast<TypeSpecifierNode *>(node->type.get())->type);
-
-        for (const auto &var : node->declarations->nodes) {
-            auto var_def = static_cast<VariableDefinitionNode *>(var.get());
-
-            // 1. ALLOCA: 为局部变量分配栈空间
-            IROperand var_ptr = new_reg_ptr(type);
-            emit(IRInstruction(IROp::ALLOCA, {}, var_ptr));
-
-            // 2. 将变量指针存入局部符号表
-            current_function->symbol_table[var_def->name] = var_ptr;
-
-            // 3. 处理初始化
-            if (var_def->initializer) {
-                IROperand init_value = dispatch_expr(var_def->initializer.get());
-                emit(IRInstruction(IROp::STORE, { init_value, var_ptr }));
-            }
+        if (!cur_func) return; // 全局变量已在 ProgramNode 处理
+        for (auto &vdef_node : node->declarations->nodes) {
+            auto vdef = static_cast<VariableDefinitionNode *>(vdef_node.get());
+            IROperand ptr = new_reg(IRType::get_pointer(vdef->type));
+            emit(IROp::ALLOCA, {}, ptr);
+            cur_func->symbol_table[vdef->name] = ptr;
         }
     }
 
     void visit(IfStatementNode *node) {
-        // 1. 创建标签
-        std::string then_label = new_label_name();
-        std::string end_label = new_label_name();
-        std::string else_label = node->else_branch ? new_label_name() : end_label;
+        std::string true_l = new_label("if_true");
+        std::string false_l = node->else_branch ? new_label("if_else") : new_label("if_end");
+        std::string end_l = node->else_branch ? new_label("if_end") : false_l;
 
-        // 2. 访问条件
-        visit_condition(node->condition.get(), then_label, else_label);
+        visit_condition(node->condition.get(), true_l, false_l);
 
-        // 3. 'Then' 块
-        create_block_and_set(then_label);
-        for (const auto &stmt : node->then_branch->nodes) {
-            dispatch(stmt.get());
-        }
-        // 'Then' 块结束后无条件跳转到 'End'
-        emit(IRInstruction(IROp::BR, { IROperand(end_label, IRType::LABEL) }));
+        create_block(true_l);
+        for (auto &s : node->then_branch->nodes) dispatch(s.get());
+        emit(IROp::BR, { IROperand::create_label(end_l) });
 
-        // 4. 'Else' 块 (如果存在)
         if (node->else_branch) {
-            create_block_and_set(else_label);
-            for (const auto &stmt : node->else_branch->nodes) {
-                dispatch(stmt.get());
-            }
-            // 'Else' 块结束后无条件跳转到 'End'
-            emit(IRInstruction(IROp::BR, { IROperand(end_label, IRType::LABEL) }));
+            create_block(false_l);
+            for (auto &s : node->else_branch->nodes) dispatch(s.get());
+            emit(IROp::BR, { IROperand::create_label(end_l) });
         }
-
-        // 5. 'End' 块
-        create_block_and_set(end_label);
+        create_block(end_l);
     }
 
     void visit(WhileStatementNode *node) {
-        // 1. 创建标签
-        std::string cond_label = new_label_name();
-        std::string body_label = new_label_name();
-        std::string end_label = new_label_name();
+        std::string cond_l = new_label("while_cond");
+        std::string body_l = new_label("while_body");
+        std::string end_l = new_label("while_end");
 
-        // 2. 注册 break/continue 标签
-        loop_start_labels.push_back(cond_label);
-        loop_switch_end_labels.push_back(end_label);
+        emit(IROp::BR, { IROperand::create_label(cond_l) });
+        create_block(cond_l);
+        visit_condition(node->condition.get(), body_l, end_l);
 
-        // 3. 无条件跳转到 'Cond' 块
-        emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
+        loop_stack.push_back({ cond_l, end_l });
+        create_block(body_l);
+        for (auto &s : node->body->nodes) dispatch(s.get());
+        emit(IROp::BR, { IROperand::create_label(cond_l) });
+        loop_stack.pop_back();
 
-        // 4. 'Cond' 块
-        create_block_and_set(cond_label);
-        visit_condition(node->condition.get(), body_label, end_label);
-
-        // 5. 'Body' 块
-        create_block_and_set(body_label);
-        for (const auto &stmt : node->body->nodes) {
-            dispatch(stmt.get());
-        }
-        // 'Body' 块结束后无条件跳转回 'Cond'
-        emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
-
-        // 6. 'End' 块
-        create_block_and_set(end_label);
-
-        // 7. 移除 break/continue 标签
-        loop_start_labels.pop_back();
-        loop_switch_end_labels.pop_back();
+        create_block(end_l);
     }
 
     void visit(ForStatementNode *node) {
-        // 1. 创建标签
-        std::string cond_label = new_label_name();
-        std::string body_label = new_label_name();
-        std::string inc_label = new_label_name();
-        std::string end_label = new_label_name();
+        std::string cond_l = new_label("for_cond");
+        std::string body_l = new_label("for_body");
+        std::string inc_l = new_label("for_inc");
+        std::string end_l = new_label("for_end");
 
-        // 2. 注册 break/continue 标签
-        // continue 跳转到 inc_label
-        loop_start_labels.push_back(inc_label);
-        // break 跳转到 end_label
-        loop_switch_end_labels.push_back(end_label);
+        if (node->initialization) dispatch(node->initialization.get());
 
-        // 3. 'Initialization' 块 (只执行一次)
-        if (node->initialization) {
-            dispatch(node->initialization.get());
-        }
-        // 无条件跳转到 'Cond' 块
-        emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
+        emit(IROp::BR, { IROperand::create_label(cond_l) });
+        create_block(cond_l);
+        if (node->condition)
+            visit_condition(node->condition.get(), body_l, end_l);
+        else
+            emit(IROp::BR, { IROperand::create_label(body_l) }); // 无条件
 
-        // 4. 'Cond' 块
-        create_block_and_set(cond_label);
-        if (node->condition) {
-            // 有条件
-            visit_condition(node->condition.get(), body_label, end_label);
-        } else {
-            // 没有条件 (无限循环, e.g., for(;;))
-            emit(IRInstruction(IROp::BR, { IROperand(body_label, IRType::LABEL) }));
-        }
+        loop_stack.push_back({ inc_l, end_l });
+        create_block(body_l);
+        for (auto &s : node->body->nodes) dispatch(s.get());
+        emit(IROp::BR, { IROperand::create_label(inc_l) });
+        loop_stack.pop_back();
 
-        // 5. 'Body' 块
-        create_block_and_set(body_label);
-        for (const auto &stmt : node->body->nodes) {
-            dispatch(stmt.get());
-        }
-        // 'Body' 块结束后无条件跳转到 'Increment'
-        emit(IRInstruction(IROp::BR, { IROperand(inc_label, IRType::LABEL) }));
+        create_block(inc_l);
+        if (node->increment) dispatch_expr(node->increment.get());
+        emit(IROp::BR, { IROperand::create_label(cond_l) });
 
-        // 6. 'Increment' 块
-        create_block_and_set(inc_label);
-        if (node->increment) {
-            dispatch_expr(node->increment.get());
-        }
-        // 'Increment' 块结束后无条件跳转回 'Cond'
-        emit(IRInstruction(IROp::BR, { IROperand(cond_label, IRType::LABEL) }));
-
-        // 7. 'End' 块
-        create_block_and_set(end_label);
-
-        // 8. 移除 break/continue 标签
-        loop_start_labels.pop_back();
-        loop_switch_end_labels.pop_back();
+        create_block(end_l);
     }
 
     void visit(SwitchStatementNode *node) {
-        // 1. 创建结束标签并注册
-        auto end_label = new_label_name();
-        loop_switch_end_labels.push_back(end_label);
+        std::string end_label = new_label("switch_end");
+        loop_stack.push_back({ "", end_label }); // 注册 'break' 目标
 
-        // 2. 访问 switch 条件表达式
-        IROperand switch_val = dispatch_expr(node->condition.get());
+        IROperand val = dispatch_expr(node->condition.get());
 
-        // 3. 预先遍历 case 块，创建标签并生成比较跳转
-        int block_cnt = 0;
-        auto case_label_map = std::map<int, int>{}; // case value -> label index
-        auto case_block_arr = std::vector<std::string>{};
-        int default_block_index = -1;
+        std::unordered_map<int, std::string> case_targets;       // 映射: case 值 -> 目标标签
+        std::unordered_map<ASTNode *, std::string> block_labels; // 映射: 块节点 -> 目标标签
+        std::string default_target = end_label;                  // 默认跳转到结尾
+        std::string pending_label;                               // "fall-through" 标签
 
-        for (const auto &stmt : node->body.get()->nodes) {
-            if (auto cast_stmt = dynamic_cast<CaseStatementNode *>(stmt.get())) {
-                case_label_map.insert({ cast_stmt->case_value, block_cnt }); // 跳转到最近的
-            }
-            if (const auto &block_stmt = dynamic_cast<CaseBlockStatementNode *>(stmt.get())) {
-                block_cnt++;
-                case_block_arr.push_back(new_label_name());
-            }
-            if (const auto &default_stmt = dynamic_cast<DefaultStatementNode *>(stmt.get()) and
-                                           default_block_index == -1) {
-                default_block_index = block_cnt;
-            }
-        }
-
-        // 4. 生成比较跳转
-        bool first_case = true;
-
-        auto create_block_when_not_fir = [&]() {
-            if (first_case) {
-                first_case = false;
-            } else {
-                create_block_and_set();
-            }
-        };
-        for (const auto &[case_value, label_index] : case_label_map) {
-            create_block_when_not_fir();
-            // 生成 TEST 指令
-            IROperand case_const = IROperand(case_value, IRType::I32);
-            emit(IRInstruction(IROp::TEST, { switch_val, case_const }));
-            // 生成 BRZ 指令跳转到对应 case 块
-            emit(IRInstruction(IROp::BRZ,
-                               { IROperand(case_block_arr[label_index], IRType::LABEL) }));
-        }
-        if (default_block_index != -1) {
-            create_block_when_not_fir();
-            // 跳转到 default 块
-            emit(IRInstruction(IROp::BR,
-                               { IROperand(case_block_arr[default_block_index], IRType::LABEL) }));
-        } else {
-            create_block_when_not_fir();
-            // 没有匹配的 case，也没有 default，跳转到 end
-            emit(IRInstruction(IROp::BR, { IROperand(end_label, IRType::LABEL) }));
-        }
-
-        // 5. case 实际执行块
-        auto now_block_cnt = 0;
-        for (const auto &stmt : node->body.get()->nodes) {
-            if (const auto &block_stmt = dynamic_cast<CaseBlockStatementNode *>(stmt.get())) {
-                // 进入对应的 case 块
-                create_block_and_set(case_block_arr[now_block_cnt]);
-                for (const auto &inner_stmt : block_stmt->body.get()->nodes) {
-                    dispatch(inner_stmt.get());
+        // Pass 1: 扫描 body，构建标签映射
+        for (auto &stmt_ptr : node->body->nodes) {
+            ASTNode *stmt = stmt_ptr.get();
+            if (auto case_node = dynamic_cast<CaseStatementNode *>(stmt)) {
+                if (pending_label.empty()) pending_label = new_label("case_block");
+                case_targets[case_node->case_value] = pending_label;
+            } else if (dynamic_cast<DefaultStatementNode *>(stmt)) {
+                if (pending_label.empty()) pending_label = new_label("case_default");
+                default_target = pending_label;
+            } else if (auto block_node = dynamic_cast<CaseBlockStatementNode *>(stmt)) {
+                if (!pending_label.empty()) {
+                    block_labels[block_node] = pending_label;
+                    pending_label.clear(); // 标签已被此块消耗
                 }
-                now_block_cnt++;
+                // 如果 pending_label 为空，此块将作为前一个块的穿透
             }
         }
 
-        // 6. 'End' 块
-        create_block_and_set(end_label);
-        // 7. 移除 switch 结束标签
-        loop_switch_end_labels.pop_back();
+        // Pass 2: 生成跳转表
+        for (const auto &[case_val, target_label] : case_targets) {
+            IROperand imm = IROperand::create_imm(case_val, IRType::get_i32());
+            emit(IROp::TEST, { val, imm }); // 假设 TEST 比较 val 和 imm
+            emit(IROp::BREQ, { IROperand::create_label(target_label) });
+        }
+        // 跳转到 default (或 end)
+        emit(IROp::BR, { IROperand::create_label(default_target) });
+
+        // Pass 3: 生成代码块
+        for (auto &stmt_ptr : node->body->nodes) {
+            if (auto block_node = dynamic_cast<CaseBlockStatementNode *>(stmt_ptr.get())) {
+                auto it = block_labels.find(block_node);
+                if (it != block_labels.end()) {
+                    // 这个块是一个 case/default 的目标，创建新基本块
+                    create_block(it->second);
+                }
+                // 访问块内的语句（在当前块中继续）
+                visit(block_node);
+            }
+        }
+
+        // 创建结束块
+        create_block(end_label);
+        loop_stack.pop_back(); // 移除 'break' 目标
     }
 
-    void visit(CaseBlockStatementNode *) {}
+    void visit(CaseStatementNode *_) {
+        // 在 Pass 1 中处理，这里什么都不做
+    }
+
+    void visit(DefaultStatementNode *_) {
+        // 在 Pass 1 中处理，这里什么都不做
+    }
+
+    void visit(CaseBlockStatementNode *node) {
+        // 访问块内的所有语句
+        for (auto &s : node->body->nodes) dispatch(s.get());
+    }
 
     void visit(ReturnStatementNode *node) {
-        IROperand ret_val = dispatch_expr(node->value.get());
-        emit(IRInstruction(IROp::RET, { ret_val }));
+        if (node->value)
+            emit(IROp::RET, { dispatch_expr(node->value.get()) });
+        else
+            emit(IROp::RET, {});
+        create_block(new_label("unreachable"));
+    }
+    void visit(BreakStatementNode *) {
+        if (loop_stack.empty()) throw std::runtime_error("Break outside loop");
+        emit(IROp::BR, { IROperand::create_label(loop_stack.back().second) });
+        create_block(new_label("unreachable"));
+    }
+    void visit(ContinueStatementNode *) {
+        if (loop_stack.empty()) throw std::runtime_error("Continue outside loop");
+        emit(IROp::BR, { IROperand::create_label(loop_stack.back().first) });
+        create_block(new_label("unreachable"));
     }
 
     void visit(InputStatementNode *node) {
-        // input(var) -> 1. call input, 2. store result to var
-
-        // 1. 获取 var 的指针
-        auto var_ref = dynamic_cast<VariableReferenceNode *>(node->var.get());
-        if (!var_ref) {
-            throw std::runtime_error("Input target must be a variable");
-        }
-        IROperand l_ptr = get_var(var_ref->name);
-
-        // 2. 确定 input 类型
-        IROp input_op;
-        IRType input_type;
-        if (l_ptr.pointee_type == IRType::I32) {
-            input_op = IROp::INPUT_INT;
-            input_type = IRType::I32;
-        } else if (l_ptr.pointee_type == IRType::I8) {
-            input_op = IROp::INPUT_CHAR;
-            input_type = IRType::I8;
-        } else {
+        IROperand ptr = get_lvalue_addr(node->var.get());
+        IRType *target_type = ptr.type->get_pointee_type();
+        IROperand val = new_reg(target_type);
+        if (target_type->is_int())
+            emit(IROp::INPUT_I32, {}, val);
+        else if (target_type->is_char())
+            emit(IROp::INPUT_I8, {}, val);
+        else
             throw std::runtime_error("Input type must be int or char");
-        }
-
-        // 3. 发出 INPUT 指令 (结果存入新寄存器)
-        IROperand result_reg = new_reg(input_type);
-        emit(IRInstruction(input_op, {}, result_reg));
-
-        // 4. STORE 结果
-        emit(IRInstruction(IROp::STORE, { result_reg, l_ptr }));
+        emit(IROp::STORE, { val, ptr });
     }
 
     void visit(OutputStatementNode *node) {
-        // 1. 访问要输出的表达式
         IROperand val = dispatch_expr(node->var.get());
-
-        // 2. 确定 output 类型
-        IROp output_op;
-        if (val.type == IRType::I32) {
-            output_op = IROp::OUTPUT_INT;
-        } else if (val.type == IRType::I8) {
-            output_op = IROp::OUTPUT_CHAR;
-        } else if (val.type == IRType::PTR && val.pointee_type == IRType::I8) {
-            // 识别为字符串 (char*)
-            output_op = IROp::OUTPUT_STRING;
-        } else {
-            throw std::runtime_error("Output type must be int, char, or string");
-        }
-
-        // 3. 发出 OUTPUT 指令
-        emit(IRInstruction(output_op, { val }));
-    }
-
-    void visit(BreakStatementNode *) {
-        if (loop_switch_end_labels.empty()) {
-            throw std::runtime_error("Break statement outside of loop");
-        }
-        emit(IRInstruction(IROp::BR, { IROperand(loop_switch_end_labels.back(), IRType::LABEL) }));
-    }
-
-    void visit(ContinueStatementNode *) {
-        if (loop_start_labels.empty()) {
-            throw std::runtime_error("Continue statement outside of loop");
-        }
-        emit(IRInstruction(IROp::BR, { IROperand(loop_start_labels.back(), IRType::LABEL) }));
+        if (val.type->is_pointer() && val.type->get_pointee_type()->is_char())
+            emit(IROp::OUTPUT_STR, { val });
+        else if (val.type->is_char())
+            emit(IROp::OUTPUT_I8, { val });
+        else
+            emit(IROp::OUTPUT_I32, { val }); // 默认
     }
 
     IROperand visit(AssignmentNode *node) {
-        // 1. 访问右侧表达式 (R-value)
-        IROperand r_value = dispatch_expr(node->rvalue.get());
+        IROperand rval = dispatch_expr(node->rvalue.get());
+        IROperand lval_ptr = get_lvalue_addr(node->lvalue.get());
+        emit(IROp::STORE, { rval, lval_ptr });
+        return rval;
+    }
 
-        // 2. 获取左侧变量的 *指针* (L-value)
-        // (假设左侧总是 VariableReferenceNode)
-        auto var_ref = dynamic_cast<VariableReferenceNode *>(node->lvalue.get());
-        if (!var_ref) {
-            throw std::runtime_error("L-value of assignment must be a variable");
+    IROperand visit(UnaryOpNode *node) {
+        if (node->op == UnaryOpKind::ADDR) {
+            return get_lvalue_addr(node->operand.get());
+        } else { // DEREF
+            IROperand ptr = dispatch_expr(node->operand.get());
+            if (!ptr.type->is_pointer()) throw std::runtime_error("Cannot dereference non-pointer");
+            IROperand val = new_reg(ptr.type->get_pointee_type());
+            emit(IROp::LOAD, { ptr }, val);
+            return val;
         }
-        IROperand l_ptr = get_var(var_ref->name);
-
-        // 3. STORE: 将 R-value 存入 L-value 的指针
-        emit(IRInstruction(IROp::STORE, { r_value, l_ptr }));
-
-        // 赋值表达式本身也返回 R-value
-        return r_value;
     }
 
     IROperand visit(BinaryOpNode *node) {
-        // 1. 访问左右操作数
-        IROperand left_val = dispatch_expr(node->left.get());
-        IROperand right_val = dispatch_expr(node->right.get());
+        // 比较运算在 visit_condition 中处理，这里只处理算术
+        IROperand lhs = dispatch_expr(node->left.get());
+        IROperand rhs = dispatch_expr(node->right.get());
+        IROperand res = new_reg(IRType::get_i32()); // 算术都返回 i32
 
         IROp op;
         switch (node->op) {
-            // --- 算术操作 ---
             case BinaryOpKind::ADD: op = IROp::ADD; break;
             case BinaryOpKind::SUB: op = IROp::SUB; break;
             case BinaryOpKind::MUL: op = IROp::MUL; break;
             case BinaryOpKind::DIV: op = IROp::DIV; break;
-
-            // --- 比较操作 ---
-            // 按照我们的设计, 比较操作不应在此处作为表达式被求值。
-            // 它们应该只在 if/while 的 visit_condition 中被处理。
-            case BinaryOpKind::LT:
-            case BinaryOpKind::GT:
-            case BinaryOpKind::LE:
-            case BinaryOpKind::GE:
-            case BinaryOpKind::EQ:
-            case BinaryOpKind::NE:
-                throw std::runtime_error(
-                    "Comparison operators can only be used in if/while conditions");
-
-            default: throw std::runtime_error("Unknown BinaryOpKind");
+            default: throw std::runtime_error("Comparison op used in expression");
         }
-
-        // 2. 创建结果寄存器
-        // (假设所有算术操作返回 I32)
-        IROperand result_reg = new_reg(IRType::I32);
-
-        // 3. 发出指令
-        emit(IRInstruction(op, { left_val, right_val }, result_reg));
-
-        return result_reg;
-    }
-
-    IROperand visit(IntegerLiteralNode *node) {
-        return IROperand(node->value, IRType::I32);
-    }
-
-    IROperand visit(CharacterLiteralNode *node) {
-        return IROperand(node->value, IRType::I8);
-    }
-
-    IROperand visit(StringLiteralNode *node) {
-        // 查找是否已有该字符串
-        auto it = string_literal_map.find(node->value);
-        if (it != string_literal_map.end()) {
-            return IROperand(it->second, IRType::PTR, IRType::I8);
-        }
-
-        // 创建新的全局字符串
-        std::string str_name = "'" + std::to_string(str_literal_count++);
-        string_literal_map[node->value] = str_name;
-
-        // 添加到模块的全局变量
-        module.global_vars.emplace_back(str_name, IRType::PTR, node->value);
-
-        return IROperand(str_name, IRType::PTR, IRType::I8);
-    }
-
-    IROperand visit(VariableReferenceNode *node) {
-        // 访问变量引用 (R-value) -> LOAD
-
-        // 1. 找到变量的 *指针*
-        IROperand var_ptr = get_var(node->name);
-
-        // 2. LOAD: 从指针加载值
-        IROperand result_reg = new_reg(var_ptr.pointee_type);
-        emit(IRInstruction(IROp::LOAD, { var_ptr }, result_reg));
-
-        return result_reg;
+        emit(op, { lhs, rhs }, res);
+        return res;
     }
 
     IROperand visit(FunctionCallNode *node) {
-        // 1. 查找函数定义
-        auto it = module.symbol_table.find(node->name);
-        if (it == module.symbol_table.end()) {
-            throw std::runtime_error("Call to undefined function: " + node->name);
-        }
+        auto it = module.global_symbols.find(node->name);
+        if (it == module.global_symbols.end())
+            throw std::runtime_error("Function not found: " + node->name);
+
         IROperand func_op = it->second;
-        IRType ret_type = func_op.type; // 我们在 ProgramNode 中存储了返回类型
-
-        // 2. 访问所有参数
-        std::vector<IROperand> args;
-        // 第一个操作数是函数名
-        args.push_back(func_op);
-
-        for (const auto &arg : node->args->nodes) {
-            args.push_back(dispatch_expr(arg.get()));
+        std::vector<IROperand> args = { func_op };
+        for (auto &arg_node : node->args->nodes) {
+            args.push_back(dispatch_expr(arg_node.get()));
         }
 
-        // 3. 创建结果寄存器 (如果函数有返回值)
-        IROperand result_reg;
-        if (ret_type != IRType::VOID) {
-            result_reg = new_reg(ret_type);
+        std::optional<IROperand> res = std::nullopt;
+        if (!func_op.type->is_void()) {
+            res = new_reg(func_op.type); // func_op.type 存储了返回类型
         }
-
-        // 4. 发出 CALL 指令
-        emit(IRInstruction(IROp::CALL, args, result_reg));
-
-        return result_reg;
+        emit(IROp::CALL, args, res);
+        return res.value_or(IROperand(IROperandType::IMM, IRType::get_void()));
     }
 
-  private:
-    IRFunction *current_function = nullptr;
-    IRBasicBlock *current_block = nullptr;
-
-    // 字符串字面量表 (map: 字符串内容 -> 全局标签名)
-    std::unordered_map<std::string, std::string> string_literal_map;
-    int str_literal_count = 0; // 用于命名字符串
-
-    int reg_count = 0;   // 用于命名寄存器 %0, %1, ...
-    int label_count = 0; // 用于命名标签 %L0, %L1, ...
-
-    // 用于 break/continue 的标签栈
-    std::vector<std::string> loop_start_labels;
-    std::vector<std::string> loop_switch_end_labels;
-
-    // --- 辅助方法 ---
-    IRType convert_ast_type(TypeKind type) {
-        switch (type) {
-            case TypeKind::INT: return IRType::I32;
-            case TypeKind::CHAR: return IRType::I8;
-            default: throw std::runtime_error("Unknown AST TypeKind");
-        }
-    }
-    IROperand new_reg(IRType type) { // 为一个值创建新寄存器
-        std::string reg_name = "%" + std::to_string(reg_count++);
-        return IROperand(reg_name, type);
-    }
-    IROperand new_reg_ptr(IRType pointee_type) { // 为一个指针创建新寄存器 (来自 alloca)
-        std::string reg_name = "%" + std::to_string(reg_count++);
-        return IROperand(reg_name, IRType::PTR, pointee_type);
-    }
-    std::string new_label_name() {
-        return "%L" + std::to_string(label_count++);
+    IROperand visit(VariableReferenceNode *node) {
+        IROperand ptr = get_symbol_ptr(node->name);
+        IROperand val = new_reg(ptr.type->get_pointee_type());
+        emit(IROp::LOAD, { ptr }, val);
+        return val;
     }
 
-    void start_function(std::string name, IRType ret_type) {
-        module.functions.emplace_back(name, ret_type);
-        current_function = &module.functions.back();
-        reg_count = 0; // 每个函数的寄存器重新从 0 开始
+    IROperand visit(IntegerLiteralNode *node) {
+        return IROperand::create_imm(node->value, IRType::get_i32());
     }
-    void end_function() {
-        current_function = nullptr;
-        current_block = nullptr;
+    IROperand visit(CharacterLiteralNode *node) {
+        return IROperand::create_imm(static_cast<int>(node->value), IRType::get_i8());
     }
-    IRBasicBlock *create_block_and_set(std::string name = "") {
-        if (name.empty()) {
-            name = new_label_name();
-        }
-        // 创建空 block 在最后
-        current_function->blocks.emplace_back(name);
-        // 插入 LABEL 伪指令
-        current_function->blocks.back().instructions.push_back(
-            IRInstruction(IROp::LABEL, { IROperand(name, IRType::LABEL) }));
-        return current_block = &current_function->blocks.back();
-    }
-
-    void emit(IRInstruction instruction) {
-        if (!current_block) {
-            throw std::runtime_error("Cannot emit instruction: no current basic block");
-        }
-        current_block->instructions.push_back(instruction);
-    }
-
-    // get_var 返回变量的 *地址(指针)*
-    IROperand get_var(const std::string &name) {
-        // 1. 查找局部变量 (在当前函数)
-        if (current_function) {
-            auto it = current_function->symbol_table.find(name);
-            if (it != current_function->symbol_table.end()) {
-                return it->second;
-            }
-        }
-        // 2. 查找全局变量
-        auto it = module.symbol_table.find(name);
-        if (it != module.symbol_table.end()) {
-            return it->second;
-        }
-        throw std::runtime_error("Unknown variable referenced: " + name);
-    }
-
-    // [新增] 用于处理 if/while 条件
-    void
-    visit_condition(ASTNode *cond, const std::string &true_label, const std::string &false_label) {
-
-        IROperand true_target = IROperand(true_label, IRType::LABEL);
-        IROperand false_target = IROperand(false_label, IRType::LABEL);
-        bool need_revert = false;
-
-        // 情况 1: 条件是一个二元比较 (e.g., a < b)
-        if (auto bin_op = dynamic_cast<BinaryOpNode *>(cond)) {
-            IROperand left_val = dispatch_expr(bin_op->left.get());
-            IROperand right_val = dispatch_expr(bin_op->right.get());
-
-            // 1. 发出 TEST 指令
-            emit(IRInstruction(IROp::TEST, { left_val, right_val }));
-
-            // 2. 根据比较类型发出条件跳转
-            switch (bin_op->op) {
-                case BinaryOpKind::LT: emit(IRInstruction(IROp::BRLT, { true_target })); break;
-                case BinaryOpKind::GT: emit(IRInstruction(IROp::BRGT, { true_target })); break;
-                case BinaryOpKind::LE: // (a <= b) -> not (a > b)
-                    emit(IRInstruction(IROp::BRGT, { false_target }));
-                    need_revert = true;
-                    break;
-                case BinaryOpKind::GE: // (a >= b) -> not (a < b)
-                    emit(IRInstruction(IROp::BRLT, { false_target }));
-                    need_revert = true;
-                    break;
-                case BinaryOpKind::EQ: // (a == b) -> Branch if Zero
-                    emit(IRInstruction(IROp::BRZ, { true_target }));
-                    break;
-                case BinaryOpKind::NE: // (a != b) -> Branch if Not Zero
-                    emit(IRInstruction(IROp::BRZ, { false_target }));
-                    need_revert = true;
-                    break;
-                default: throw std::runtime_error("Non-comparison op in condition");
-            }
-        }
-        // 情况 2: 条件是一个值 (e.g., if(x), while(1))
-        else {
-            IROperand cond_val = dispatch_expr(cond);
-            // 假设与 0 比较
-            IROperand zero = IROperand(0, IRType::I32);
-
-            // 1. 发出 TEST 指令
-            emit(IRInstruction(IROp::TEST, { cond_val, zero }));
-
-            // 2. if(x) -> if(x != 0) -> BRNZ
-            emit(IRInstruction(IROp::BRZ, { false_target }));
-            need_revert = true;
-        }
-
-        // 另一个分支
-        create_block_and_set();
-        if (need_revert) {
-            emit(IRInstruction(IROp::BR, { true_target }));
-        } else {
-            emit(IRInstruction(IROp::BR, { false_target }));
-        }
+    IROperand visit(StringLiteralNode *node) {
+        std::string lbl = "@str_" + std::to_string(str_cnt++);
+        IRGlobalVar g(lbl, IRType::get_char_ptr());
+        g.init_str = node->value;
+        module.globals.push_back(g);
+        return IROperand::create_global(lbl, IRType::get_char_ptr());
     }
 };

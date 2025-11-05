@@ -32,6 +32,7 @@ void yyerror(const char* msg) {
     char* str;
     ASTNode* node;
     ASTNode_List* node_list;
+    Type* type;
 }
 
 /* 运算符优先级 */
@@ -39,6 +40,7 @@ void yyerror(const char* msg) {
 %left '<' '>' LE GE EQ NE
 %left '+' '-'
 %left '*' '/'
+%right UNARY_PREC
 
 
 /* 基础类型 */
@@ -59,8 +61,11 @@ void yyerror(const char* msg) {
 %type <node_list> start definition_list
 %type <node> definition
 
-/* 类型定义 默认int */
-%type <node> type_specifier optional_type_specifier
+/* 类型定义 */
+%type <type> type_specifier optional_type_specifier
+
+/* 标识符声明 */
+%type <node> declarator
 
 /* 函数定义 */
 %type <node> function_definition
@@ -68,7 +73,7 @@ void yyerror(const char* msg) {
 %type <node_list> function_parameter_declaration_list optional_function_parameter_declaration_list
 
 /* 变量定义 */
-%type <node_list> var_definition_list_inner
+%type <node_list> var_definition_list
 %type <node> var_definition_single
 %type <node> var_definition
 
@@ -87,6 +92,7 @@ void yyerror(const char* msg) {
 /* 表达式 */
 %type <node> expression optional_expression
 %type <node> assignment comparison calculation immediate
+%type <node> unary_expression
 
 /* 变量调用 */
 %type <node> declared_var
@@ -126,16 +132,25 @@ type_specifier: INT {
 ;
 
 optional_type_specifier : {
-    $$ = ast_create_type_int();
+    $$ = ast_create_type_void();
 }
 | type_specifier {
     $$ = $1;
 }
 ;
 
-/* 函数定义 这里默认返回int TODO 可能会*/
-function_definition: IDENTIFIER '(' optional_function_parameter_declaration_list ')' '{' block_item_list '}' {
-    $$ = ast_create_definition_function(ast_create_type_int(), $1, $3, $6);
+/* 标识符声明 */
+declarator: '*' declarator {
+    $$ = ast_create_declarator_ptr($2);
+}
+| IDENTIFIER {
+    $$ = ast_create_declarator_ident($1);
+}
+;
+
+/* 函数定义 */
+function_definition: optional_type_specifier declarator '(' optional_function_parameter_declaration_list ')' '{' block_item_list '}' {
+    $$ = ast_create_definition_function($1, $2, $4, $7);
 }
 ;
 
@@ -155,30 +170,22 @@ function_parameter_declaration_list: function_parameter_declaration {
 }
 ;
 
-function_parameter_declaration: optional_type_specifier IDENTIFIER {
+function_parameter_declaration: type_specifier declarator {
     $$ = ast_create_declaration_parameter($1, $2);
 }
 ;
 
 /* 变量定义 */
-var_definition: type_specifier var_definition_list_inner {
+var_definition: type_specifier var_definition_list {
     $$ = ast_create_definition_variable_list($1, $2);
 }
 ;
 
-var_definition_list_inner: var_definition_single {
+var_definition_list: declarator {
     $$ = ast_list_create($1);
 }
-| var_definition_list_inner ',' var_definition_single {
+| var_definition_list ',' declarator {
     $$ = ast_list_append($1, $3);
-}
-;
-
-var_definition_single: IDENTIFIER {
-    $$ = ast_create_definition_variable($1, nullptr);
-}
-| IDENTIFIER '=' expression {
-    $$ = ast_create_definition_variable($1, $3);
 }
 ;
 
@@ -321,7 +328,7 @@ expression: assignment { $$ = $1; }
 | calculation { $$ = $1; }
 ;
 
-assignment: declared_var '=' expression {
+assignment: unary_expression '=' expression {
     $$ = ast_create_assignment($1, $3);
 }
 ;
@@ -358,10 +365,19 @@ calculation: calculation '+' calculation {
 | calculation '/' calculation {
     $$ = ast_create_calculation_div($1, $3);
 }
-| immediate { $$ = $1; }
+| unary_expression { $$ = $1; }
+;
+
+unary_expression: immediate { $$ = $1; }
 | declared_var { $$ = $1; }
 | function_call { $$ = $1; }
 | '(' expression ')' { $$ = $2; }
+| '&' unary_expression %prec UNARY_PREC {
+    $$ = ast_create_unary_op_addr($2);
+}
+| '*' unary_expression %prec UNARY_PREC {
+    $$ = ast_create_unary_op_deref($2);
+}
 ;
 
 immediate: INTEGER {
