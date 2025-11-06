@@ -1,9 +1,8 @@
 #!/bin/sh
-cd asm-machine
 echo "---  Assembling: machine/asm ---"
-./asm input.s
+./build/asm ./build/out.s
 
 echo "---  Running: machine/machine ---"
-./machine input.o
+./build/machine ./build/out.o
 
 echo "--- Done ---"

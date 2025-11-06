@@ -26,13 +26,19 @@
     {
         "label": "Run",
         "command": "./build/cyrilcc",
-        "args": ["test/testcase/struct-ptr.m"],
+        "args": ["test/testcase/arr-struct.m", "-o", "build/out.s"],
         "cwd": "${ZED_WORKTREE_ROOT}"
     },
     {
         "label": "Test",
-        "command": "asm-machine/test.sh",
+        "command": "./test.sh",
         "args": [""],
+        "cwd": "${ZED_WORKTREE_ROOT}"
+    },
+    {
+        "label": "Meson Test",
+        "command": "meson",
+        "args": ["test", "-C", "build"],
         "cwd": "${ZED_WORKTREE_ROOT}"
     },
     {

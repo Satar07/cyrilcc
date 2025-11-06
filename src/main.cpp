@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 
 #include "asm_gen.hpp"
 #include "ast.hpp"
@@ -11,14 +12,21 @@
 #include "parser.h"
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("usage: %s filename\n", argv[0]);
-        exit(0);
+    const char *input_path = nullptr;
+    const char *asm_output_path = nullptr;
+
+    // cyrilcc input.m -o output.s
+    if (argc == 4 && std::string(argv[2]) == "-o") {
+        input_path = argv[1];
+        asm_output_path = argv[3];
+    } else {
+        fprintf(stderr, "Usage: %s <input.m> -o <output.s>\n", argv[0]);
+        exit(1);
     }
 
-    if ((yyin = fopen(argv[1], "r")) == NULL) {
-        printf("open file %s failed\n", argv[1]);
-        exit(0);
+    if ((yyin = fopen(input_path, "r")) == NULL) {
+        fprintf(stderr, "Error: open file %s failed\n", input_path);
+        exit(1);
     }
 
     // 调用解析器 生成AST到root
@@ -30,7 +38,6 @@ int main(int argc, char *argv[]) {
         IRGenerator ir{ root };
         ir.module.dump(std::cout);
 
-        const char *asm_output_path = "asm-machine/input.s";
         std::ofstream asm_file_stream(asm_output_path);
 
         if (!asm_file_stream.is_open()) {
