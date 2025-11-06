@@ -111,6 +111,15 @@ class IRType {
         return struct_fields;
     }
 
+    IRType *get_field_type_by_index(int index) const {
+        if (kind != TypeKind::STRUCT)
+            throw std::runtime_error("get_field_by_index called on non-struct type");
+        if (index < 0 || index >= static_cast<int>(struct_fields.size())) {
+            throw std::runtime_error("Field index out of bounds");
+        }
+        return struct_fields.at(index).type;
+    }
+
     int get_field_index(const std::string &name) {
         if (kind != TypeKind::STRUCT)
             throw std::runtime_error("get_field_index called on non-struct type");

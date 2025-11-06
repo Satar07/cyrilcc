@@ -97,6 +97,7 @@ class AsmGenerator {
                 emit(dbs, "String: " + global.escaped_init_str());
             } else {
                 // 假定所有其他全局变量为 4 字节，零初始化
+                // TODO: 支持基于类型的正确大小和初始化
                 emit("DBN 0, 4", "Global var: " + global.name);
             }
         }
@@ -309,48 +310,84 @@ class AsmGenerator {
             }
 
             case IROp::GEP: {
-                // GEP %res = GEP %base_ptr, i32 0, i32 %idx TODO 支持更多的
+                // GEP %res = GEP %base_ptr, idx1, idx2, ...
+                // %base_ptr 位于 inst.args[0]
+                // 索引从 inst.args[1] (idx1) 开始
+
+                // R8 (SCRATCH_REGS[0]) 将保存计算出的地址
+                // R9 (SCRATCH_REGS[1]) 用于加载索引
+                // R10 (SCRATCH_REGS[2]) 用于加载元素大小或偏移
+
                 const auto &base_op = inst.args[0];
-                const auto &idx_op = inst.args[2];
                 const auto &result_op = inst.result.value();
 
-                IRType *base_type = base_op.type->get_pointee_type();
+                ensure_in_reg(base_op, SCRATCH_REGS[0]);
 
-                ensure_in_reg(base_op, SCRATCH_REGS[0]); // R8 = base_address
+                IRType *current_type = base_op.type->get_pointee_type();
+                for (size_t i = 1; i < inst.args.size(); ++i) {
+                    const auto &idx_op = inst.args[i];
+                    if (i == 1) {
+                        // --- 处理第一个索引 (idx1) ---
+                        if (idx_op.op_type == IROperandType::IMM && idx_op.imm_value == 0) {
+                            // 常见情况: i32 0, 无需操作
+                            emit("# GEP: idx1 is 0, no base offset");
+                        } else {
+                            int pointee_size = current_type->size();
+                            spill_reg(SCRATCH_REGS[2], "GEP pointee size");
+                            emit("LOD R" + std::to_string(SCRATCH_REGS[2]) + ", " +
+                                     std::to_string(pointee_size),
+                                 "GEP: Pointee size " + std::to_string(pointee_size));
+                            ensure_in_reg(idx_op, SCRATCH_REGS[1]);
+                            emit("MUL R" + std::to_string(SCRATCH_REGS[1]) + ", R" +
+                                     std::to_string(SCRATCH_REGS[2]),
+                                 "GEP: idx1 * size");
+                            emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
+                                     std::to_string(SCRATCH_REGS[1]),
+                                 "GEP: base + (idx1 * size)");
+                        }
+                    } else {
+                        // --- 处理后续索引 (idx2, idx3, ...) ---
+                        if (current_type->is_struct()) {
+                            // --- 索引结构体: GEP ..., <field_idx>, ... ---
+                            if (idx_op.op_type != IROperandType::IMM) {
+                                throw std::runtime_error("GEP struct index must be immediate");
+                            }
+                            int field_index = idx_op.imm_value;
+                            int offset = current_type->get_field_offset(field_index);
 
-                if (base_type->is_struct()) {
-                    // --- Struct: %res = GEP %base, 0, <field_idx> ---
-                    if (idx_op.op_type != IROperandType::IMM) {
-                        throw std::runtime_error("GEP struct index must be immediate");
+                            if (offset > 0) {
+                                // R10 = field_offset
+                                spill_reg(SCRATCH_REGS[2], "GEP field offset");
+                                emit("LOD R" + std::to_string(SCRATCH_REGS[2]) + ", " +
+                                         std::to_string(offset),
+                                     "GEP: Field offset " + std::to_string(offset));
+
+                                emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
+                                         std::to_string(SCRATCH_REGS[2]),
+                                     "GEP: + field offset");
+                            }
+                            current_type = current_type->get_field_type_by_index(field_index);
+
+                        } else if (current_type->is_array()) {
+                            IRType *element_type = current_type->get_array_element_type();
+                            int element_size = element_type->size();
+                            spill_reg(SCRATCH_REGS[2], "GEP elem size");
+                            emit("LOD R" + std::to_string(SCRATCH_REGS[2]) + ", " +
+                                     std::to_string(element_size),
+                                 "GEP: Element size " + std::to_string(element_size));
+                            ensure_in_reg(idx_op, SCRATCH_REGS[1]);
+                            emit("MUL R" + std::to_string(SCRATCH_REGS[1]) + ", R" +
+                                     std::to_string(SCRATCH_REGS[2]),
+                                 "GEP: index * size");
+                            emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
+                                     std::to_string(SCRATCH_REGS[1]),
+                                 "GEP: base + offset");
+                            current_type = element_type;
+                        } else {
+                            throw std::runtime_error("GEP index into non-aggregate type: " +
+                                                     current_type->to_string());
+                        }
                     }
-                    int field_index = idx_op.imm_value;
-                    int offset = base_type->get_field_offset(field_index);
-
-                    if (offset > 0) {
-                        emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", " +
-                                 std::to_string(offset),
-                             "GEP: Add field offset " + std::to_string(offset));
-                    }
-
-                } else if (base_type->is_array()) {
-                    // --- Array: %res = GEP %base, 0, %idx ---
-                    int element_size = base_type->get_array_element_type()->size();
-
-                    ensure_in_reg(idx_op, SCRATCH_REGS[1]); // R9 = index
-                    spill_reg(SCRATCH_REGS[2], "GEP scratch");
-
-                    emit("LOD R" + std::to_string(SCRATCH_REGS[2]) + ", " +
-                             std::to_string(element_size),
-                         "GEP: Element size " + std::to_string(element_size));
-                    emit("MUL R" + std::to_string(SCRATCH_REGS[1]) + ", R" +
-                             std::to_string(SCRATCH_REGS[2]),
-                         "GEP: index * size");
-                    emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
-                             std::to_string(SCRATCH_REGS[1]),
-                         "GEP: base + offset");
-                } else {
-                    throw std::runtime_error("GEP on non-aggregate type: " +
-                                             base_type->to_string());
                 }
                 assign_to_reg(result_op, SCRATCH_REGS[0]);
                 break;
@@ -371,7 +408,7 @@ class AsmGenerator {
                 else if (inst.op == IROp::DIV)
                     op_str = "DIV";
                 else
-                    op_str = "MOD";
+                    throw std::runtime_error("Unknown binary op");
 
                 ensure_in_reg(inst.args[0], SCRATCH_REGS[0]);
                 ensure_in_reg(inst.args[1], SCRATCH_REGS[1]);
