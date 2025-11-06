@@ -68,11 +68,12 @@ class AsmGenerator {
 
     // --- 状态量 ---
     std::unordered_map<std::string, std::string>
-        global_label_map;                               // IR全局名 (@g) -> Asm标签 (VARg)
-    std::unordered_map<std::string, int> alloca_map;    // 局部Alloca (%1) -> 栈偏移 (-4)
-    std::unordered_map<std::string, int> temp_home_map; // 局部临时/参数 (%0) -> 栈偏移 (-8)
-    std::unordered_map<std::string, int> reg_cache;     // 临时变量名 (%1) -> 物理寄存器 (R8)
-    std::unordered_map<int, std::string> reg_cache_rev; // 物理寄存器 (R8) -> 临时变量名 (%1)
+        global_label_map;                                    // IR全局名 (@g) -> Asm标签 (VARg)
+    std::unordered_map<std::string, int> alloca_map;         // 局部Alloca (%1) -> 栈偏移 (-4)
+    std::unordered_map<std::string, int> temp_home_map;      // 局部临时/参数 (%0) -> 栈偏移 (-8)
+    std::unordered_map<std::string, IRType *> temp_type_map; // 局部临时/参数 (%0) -> 类型 (i32*)
+    std::unordered_map<std::string, int> reg_cache;          // 临时变量名 (%1) -> 物理寄存器 (R8)
+    std::unordered_map<int, std::string> reg_cache_rev;      // 物理寄存器 (R8) -> 临时变量名 (%1)
 
     int current_frame_size = 0;
     int label_counter = 0;
@@ -109,6 +110,7 @@ class AsmGenerator {
         // 清理状态
         this->alloca_map.clear();
         this->temp_home_map.clear();
+        this->temp_type_map.clear();
         this->reg_cache.clear();
         this->reg_cache_rev.clear();
 
@@ -117,14 +119,23 @@ class AsmGenerator {
 
         // 映射参数主页
         for (size_t i = 0; i < func.params.size(); ++i) {
-            const auto &param_name = func.params.at(i).name;
+            const auto &param_value = func.params.at(i);
+            const auto &param_name = param_value.name;
+            this->temp_type_map.insert({ param_name, param_value.type });
+
             if (i < MAX_REGS_FOR_PARAMS) {
                 // 寄存器传递的参数，在栈上为其分配 "主页"
-                local_stack_size += 4;
+                // i1=4, i8=1, i32=4, ptr=4
+                int param_size = 4;
+                if (param_value.type->is_char()) {
+                    param_size = 1;
+                }
+                local_stack_size += param_size;
                 this->temp_home_map.insert({ param_name, -local_stack_size });
             } else {
                 // 栈传递的参数，其 "主页" 就是它在调用者栈帧中的位置
                 this->temp_home_map.insert({ param_name, param_stack_offset });
+                // 栈上传的参这里设置 4 字节
                 param_stack_offset += 4;
             }
         }
@@ -144,8 +155,16 @@ class AsmGenerator {
                 if (inst.result && !inst.result->type->is_void()) {
                     auto result_value = inst.result.value();
                     auto name = result_value.name;
-                    local_stack_size += result_value.type->size();
+
+                    int var_size;
+                    if (result_value.type->is_bool()) {
+                        var_size = 4; // i1 使用 LOD/STO, 假定 4 字节
+                    } else {
+                        var_size = result_value.type->size(); // i8=1, i32/ptr=4
+                    }
+                    local_stack_size += var_size;
                     this->temp_home_map.insert({ name, -local_stack_size });
+                    this->temp_type_map.insert({ name, result_value.type });
                 }
             }
         }
@@ -167,10 +186,12 @@ class AsmGenerator {
 
         // 将寄存器中的参数存入其 "主页"
         for (size_t i = 0; i < func.params.size() && i < MAX_REGS_FOR_PARAMS; ++i) {
-            const auto &param_name = func.params[i].name;
+            const auto &param_value = func.params[i];
+            const auto &param_name = param_value.name;
             int param_reg = REG_RETVAL + i;
             int offset = temp_home_map.at(param_name);
-            emit("STO (R" + std::to_string(REG_FP) + format_offset(offset) + "), R" +
+            std::string op_mnemonic = get_mem_op_for_type(param_value.type, false);
+            emit(op_mnemonic + " (R" + std::to_string(REG_FP) + format_offset(offset) + "), R" +
                      std::to_string(param_reg),
                  "Store param " + param_name + " to home");
         }
@@ -238,7 +259,7 @@ class AsmGenerator {
 
             case IROp::LOAD: {
                 std::string src_name = inst.args[0].name;
-                std::string op_mnemonic = get_mem_op_mnemonic(inst.args[0], true);
+                std::string op_mnemonic = get_mem_op_for_ptr_type(inst.args[0].type, true);
 
                 assign_to_reg(inst.result.value(), SCRATCH_REGS[0]);
 
@@ -264,7 +285,7 @@ class AsmGenerator {
 
             case IROp::STORE: {
                 ensure_in_reg(inst.args[0], SCRATCH_REGS[0]);
-                std::string op_mnemonic = get_mem_op_mnemonic(inst.args[1], false);
+                std::string op_mnemonic = get_mem_op_for_ptr_type(inst.args[1].type, false);
                 std::string dest_name = inst.args[1].name;
 
                 if (alloca_map.count(dest_name)) {
@@ -375,10 +396,12 @@ class AsmGenerator {
                         ensure_in_reg(inst.args[i], REG_RETVAL + (i - 1));
                     } else {
                         ensure_in_reg(inst.args[i], SCRATCH_REGS[0]);
-                        emit("STO (R" + std::to_string(REG_SP) + "), R" +
+                        std::string op_mnemonic = get_mem_op_for_type(inst.args[i].type, false);
+                        emit(op_mnemonic + " (R" + std::to_string(REG_SP) + "), R" +
                                  std::to_string(SCRATCH_REGS[0]),
                              "Push stack arg");
                         emit("SUB R" + std::to_string(REG_SP) + ", 4");
+                        // 这里传参参数大小固定四字节，防止某些神秘测试乱传参
                         stack_arg_size += 4;
                     }
                 }
@@ -449,26 +472,42 @@ class AsmGenerator {
             if (!temp_home_map.count(name_to_spill)) {
                 throw std::runtime_error("Spill failed: No home for " + name_to_spill);
             }
+            if (!temp_type_map.count(name_to_spill)) {
+                throw std::runtime_error("Spill failed: No type for " + name_to_spill);
+            }
+
+            IRType *type = temp_type_map.at(name_to_spill);
+            std::string op_mnemonic = get_mem_op_for_type(type, false);
+
             int home_offset = temp_home_map.at(name_to_spill);
-            emit("STO (R" + std::to_string(REG_FP) + format_offset(home_offset) + "), R" +
-                     std::to_string(reg),
+            emit(op_mnemonic + " (R" + std::to_string(REG_FP) + format_offset(home_offset) +
+                     "), R" + std::to_string(reg),
                  "Spill " + name_to_spill + " (" + reason + ")");
             reg_cache.erase(name_to_spill);
             reg_cache_rev.erase(reg);
         }
     }
 
-    // 获取内存操作的助记符 (LOD/LDC 或 STO/STC)
-    std::string get_mem_op_mnemonic(const IROperand &op, bool is_load = true) {
-        IRType *type = op.type;
-        if (type->is_pointer()) {
-            type = type->get_pointee_type();
+    // 根据指针操作数获取内存操作 (LOD/LDC or STO/STC)
+    std::string get_mem_op_for_ptr_type(IRType *type, bool is_load) {
+        if (!type->is_pointer()) {
+            throw std::runtime_error("get_mem_op_mnemonic expects a pointer operand, got " +
+                                     type->to_string());
         }
-        // 假设 i8 (char) 使用 LDC/STC
+        type = type->get_pointee_type();
         if (type->is_char()) {
             return is_load ? "LDC" : "STC";
         }
-        // 默认 i32/pointer 使用 LOD/STO
+        return is_load ? "LOD" : "STO";
+    }
+
+    std::string get_mem_op_for_type(IRType *type, bool is_load) {
+        if (!type) {
+            throw std::runtime_error("get_mem_op_for_type: type is null");
+        }
+        if (type->is_char()) {
+            return is_load ? "LDC" : "STC";
+        }
         return is_load ? "LOD" : "STO";
     }
 
@@ -523,10 +562,16 @@ class AsmGenerator {
             return;
         }
 
-        // Case 3c: 值在 alloca 中
+        // Case 3c: 值在 alloca 中 (即操作数是 %ptr，它是个 alloca)
         if (alloca_map.count(name)) {
             spill_reg(target_reg, "load alloca addr"); // 腾出目标寄存器
             get_var_address(op, target_reg);           // 加载 %0 的地址到 target_reg
+            // 注意：这里加载的是 alloca 的 *地址*，而不是 alloca 的 *内容*
+            // 这适用于 GEP, STORE, LOAD 的 %ptr 参数
+            // 但如果 %ptr 本身被用作 *值*（例如，参数传递），我们需要吗？
+            // ensure_in_reg 假定我们总是想要 *值*。
+            // 对于 alloca (%ptr)，它的 "值" 就是它在栈上的地址。
+            // 所以 get_var_address (加载地址) 是正确的。
             return;
         }
 
@@ -535,8 +580,15 @@ class AsmGenerator {
         if (not temp_home_map.contains(name)) {
             throw std::runtime_error("Temp var has no home: " + name);
         }
+        if (not temp_type_map.contains(name)) {
+            throw std::runtime_error("Temp var has no type: " + name);
+        }
+
+        IRType *type = temp_type_map.at(name);
+        std::string op_mnemonic = get_mem_op_for_type(type, true);
+
         int home_offset = temp_home_map.at(name);
-        emit("LOD R" + target_reg_str + ", (R" + std::to_string(REG_FP) +
+        emit(op_mnemonic + " R" + target_reg_str + ", (R" + std::to_string(REG_FP) +
                  format_offset(home_offset) + ")",
              "Reload " + name + " from home");
         // 更新缓存
@@ -573,9 +625,19 @@ class AsmGenerator {
         if (reg_cache.empty()) return;
         emit("# Spilling all regs: " + reason);
         for (auto const &[name, reg] : reg_cache) {
+            if (!temp_home_map.count(name)) {
+                throw std::runtime_error("Spill all failed: No home for " + name);
+            }
+            if (!temp_type_map.count(name)) {
+                throw std::runtime_error("Spill all failed: No type for " + name);
+            }
+
+            IRType *type = temp_type_map.at(name);
+            std::string op_mnemonic = get_mem_op_for_type(type, false);
+
             int home_offset = temp_home_map.at(name);
-            emit("STO (R" + std::to_string(REG_FP) + format_offset(home_offset) + "), R" +
-                     std::to_string(reg),
+            emit(op_mnemonic + " (R" + std::to_string(REG_FP) + format_offset(home_offset) +
+                     "), R" + std::to_string(reg),
                  "Spill " + name);
         }
         reg_cache.clear();

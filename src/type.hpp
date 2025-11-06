@@ -123,8 +123,8 @@ class IRType {
     }
 
     int size() {
-        // 我直接对齐
-        if (is_char() or is_int() or is_pointer()) return 4;
+        if (is_char()) return 1;
+        if (is_int() or is_pointer()) return 4;
         if (is_array()) {
             return get_array_size() * get_array_element_type()->size();
         }
