@@ -40,8 +40,6 @@ cyrilcc = executable(
     'cyrilcc',
     'src/main.cpp',
     'src/ast.cpp',
-    'src/ir.cpp',
-    'src/asm_gen.cpp',
     parser_files,
     lexer_files,
     include_directories: inc_dirs,
