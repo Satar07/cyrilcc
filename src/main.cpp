@@ -10,6 +10,8 @@
 #include "ir.hpp"
 #include "lexer.h"
 #include "parser.h"
+#include "pass.hpp"
+#include "pass/dom_analysis.hpp"
 
 int main(int argc, char *argv[]) {
     const char *input_path = nullptr;
@@ -36,6 +38,14 @@ int main(int argc, char *argv[]) {
         root.get()->print(std::cout);
 
         IRGenerator ir{ root };
+
+        PassManager pm;
+        pm.addFunctionPass(new BuildCFGPass());
+        pm.addFunctionPass(new DominatorTreePass());
+        pm.addFunctionPass(new DominanceFrontierPass());
+
+        pm.run(ir.module);
+
         ir.module.dump(std::cout);
 
         std::ofstream asm_file_stream(asm_output_path);

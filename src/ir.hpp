@@ -2,7 +2,6 @@
 
 #include "ast.hpp"  // 包含 ast.hpp
 #include "type.hpp" // 包含 type.hpp
-#include <algorithm>
 #include <cstddef>
 #include <iostream>
 #include <memory>
@@ -10,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -95,7 +95,8 @@ enum class IROp {
     OUTPUT_I8,
     OUTPUT_STR,
     // 伪指令
-    LABEL
+    LABEL,
+    PHI, // φ节点
 };
 
 // 辅助函数：将 IROp 转换为字符串
@@ -122,6 +123,7 @@ inline std::string op_to_string(IROp op) {
         case IROp::OUTPUT_I8: return "output_i8";
         case IROp::OUTPUT_STR: return "output_str";
         case IROp::LABEL: return "label";
+        case IROp::PHI: return "phi";
     }
     return "unknown_op";
 }
@@ -152,24 +154,17 @@ struct IRInstruction {
             // 特殊处理：跳转目标 (label) 不显示类型
             if (arg.op_type == IROperandType::LABEL && op != IROp::LABEL) {
                 os << "label " << arg.to_string();
+                continue;
             }
-            // // 特殊处理：STORE 指令的第二个操作数 (指针)
-            // else if (op == IROp::STORE && &arg == &args[1]) {
-            //     os << arg.to_string() << " " << arg.type->to_string();
-            // }
-            // // 特殊处理：CALL 指令的第一个操作数 (函数名)
-            // else if (op == IROp::CALL && &arg == &args[0]) {
-            //     os << arg.to_string() << " " << arg.type->to_string();
-            // }
-            // 默认情况：(类型 值)
-            else {
-                // 打印类型 (e.g., "i32", "i8*")
-                // if (arg.type) {
-                //     os ;
-                // }
-                // 打印值 (e.g., "5", "%1", "@g_var")
-                os << arg.to_string() << " " << arg.type->to_string();
+            // phi
+            if (op == IROp::PHI) {
+                for (size_t i = 0; i < args.size(); i += 2) {
+                    os << " [ " << args[i].to_string() << ", " << args[i + 1].to_string() << " ]";
+                    if (i + 2 < args.size()) os << ",";
+                }
+                continue;
             }
+            os << arg.to_string() << " " << arg.type->to_string();
         }
     }
 };
@@ -181,6 +176,11 @@ struct IRBasicBlock {
 
     std::vector<IRBasicBlock *> successors;
     std::vector<IRBasicBlock *> predecessors;
+
+    IRBasicBlock *idom = nullptr;                     // 本块的支配节点
+    std::vector<IRBasicBlock *> dom_child;            // 本块在支配树中的孩子节点
+    std::unordered_set<IRBasicBlock *> dom_frontiers; // 本块的支配边界
+
     IRBasicBlock(std::string l) : label(std::move(l)) {}
 };
 
@@ -191,72 +191,11 @@ struct IRFunction {
     std::vector<IROperand> params;                           // 参数列表 (虚拟寄存器)
     std::vector<IRBasicBlock> blocks;                        // 基本块列表
     std::unordered_map<std::string, IROperand> symbol_table; // 局部变量表 (映射到栈指针)
+    int vreg_cnt = 0;
     IRFunction(std::string n, IRType *rt) : name(std::move(n)), ret_type(rt) {}
 
-    void build_cfg() {
-        // 1. 创建标签到基本块的映射
-        std::unordered_map<std::string, IRBasicBlock *> label_map;
-        for (IRBasicBlock &block : blocks) {
-            label_map[block.label] = &block;
-            // 清理旧链接 (以便重新构建)
-            block.successors.clear();
-            block.predecessors.clear();
-        }
-
-        // 加边
-        auto add_edge = [&](IRBasicBlock *from, IRBasicBlock *to) {
-            if (!from || !to) return; // 安全检查
-
-            // 避免重复添加后继
-            if (std::find(from->successors.begin(), from->successors.end(), to) ==
-                from->successors.end()) {
-                from->successors.push_back(to);
-            }
-            // 避免重复添加前驱
-            if (std::find(to->predecessors.begin(), to->predecessors.end(), from) ==
-                to->predecessors.end()) {
-                to->predecessors.push_back(from);
-            }
-        };
-
-        // 2. 遍历所有基本块
-        for (size_t i = 0; i < blocks.size(); ++i) {
-            IRBasicBlock &block = blocks[i];
-            bool has_unconditional_terminator = false;
-
-            for (const IRInstruction &inst : block.insts) {
-                switch (inst.op) {
-                    case IROp::RET: has_unconditional_terminator = true; break;
-                    case IROp::BR: {
-                        // 无条件跳转：添加一个后继
-                        std::string target_label = inst.args[0].name;
-                        if (label_map.count(target_label)) {
-                            add_edge(&block, label_map[target_label]);
-                        }
-                        has_unconditional_terminator = true;
-                        break;
-                    }
-                    case IROp::BRZ:
-                    case IROp::BRLT:
-                    case IROp::BRGT: {
-                        // 条件跳转：添加一个后继
-                        std::string target_label = inst.args[0].name;
-                        if (label_map.count(target_label)) {
-                            add_edge(&block, label_map[target_label]);
-                        }
-                        break;
-                    }
-                    default:
-                        // 非终结指令
-                        break;
-                }
-            }
-
-            // 3. 处理隐式“fall-through”
-            if (!has_unconditional_terminator && (i + 1) < blocks.size()) {
-                add_edge(&block, &blocks[i + 1]);
-            }
-        }
+    IROperand new_reg(IRType *type) {
+        return IROperand::create_reg("%" + std::to_string(vreg_cnt++), type);
     }
 };
 
@@ -340,6 +279,34 @@ struct IRModule {
                     }
                 }
                 os << "\n";
+                os << " ; Immediate Dominator: ";
+                if (b.idom) {
+                    os << b.idom->label;
+                } else {
+                    os << "<none>";
+                }
+                os << "\n";
+
+                os << " ; Dominator Children: ";
+                if (b.dom_child.empty()) {
+                    os << "<none>";
+                } else {
+                    for (size_t c = 0; c < b.dom_child.size(); ++c) {
+                        os << b.dom_child[c]->label << (c < b.dom_child.size() - 1 ? ", " : "");
+                    }
+                }
+                os << "\n";
+                os << " ; Dominance Frontiers: ";
+                if (b.dom_frontiers.empty()) {
+                    os << "<none>";
+                } else {
+                    size_t count = 0;
+                    for (const auto &df : b.dom_frontiers) {
+                        os << df->label << (count < b.dom_frontiers.size() - 1 ? ", " : "");
+                        count++;
+                    }
+                }
+                os << "\n";
             }
             os << "}\n\n";
         }
@@ -361,7 +328,6 @@ class IRGenerator {
     // --- 状态 ---
     IRFunction *cur_func = nullptr;
     IRBasicBlock *cur_block = nullptr;
-    int vreg_cnt = 0;
     int label_cnt = 0;
     int str_cnt = 0;
     std::vector<std::pair<std::string, std::string>> loop_stack; // <continue_lbl, break_lbl>
@@ -371,7 +337,8 @@ class IRGenerator {
         return prefix + std::to_string(label_cnt++);
     }
     IROperand new_reg(IRType *type) {
-        return IROperand::create_reg("%" + std::to_string(vreg_cnt++), type);
+        if (!cur_func) throw std::runtime_error("Cannot create register outside a function");
+        return cur_func->new_reg(type);
     }
 
     void create_block(std::string label) {
@@ -609,7 +576,6 @@ class IRGenerator {
     void visit(FunctionNode *node) {
         module.functions.emplace_back("@" + node->name, node->return_type);
         cur_func = &module.functions.back();
-        vreg_cnt = 0; // 重置虚拟寄存器
 
         create_block(new_label("entry"));
 
@@ -649,7 +615,9 @@ class IRGenerator {
                      ? std::vector<IROperand>{}
                      : std::vector<IROperand>{ IROperand::create_imm(0, IRType::get_i32()) });
         }
-        cur_func->build_cfg();
+        // cur_func->build_cfg();
+        // cur_func->compute_dominators();
+        // cur_func->compute_dominance_frontiers();
         cur_func = nullptr;
     }
 
