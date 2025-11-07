@@ -203,7 +203,7 @@ class VariableDefinitionNode : public ASTNode {
     }
 };
 
-// 变量定义列表 (e.g., int a, *b;)
+// 变量定义列表
 class VariableDeclarationListNode : public ASTNode {
   public:
     std::unique_ptr<ASTNode_List> declarations; // 包含 VariableDefinitionNode 列表

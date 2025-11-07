@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ir.hpp" // 包含更新后的 ir.hpp
+#include "ir.hpp"
 #include "type.hpp"
 #include <array>
 #include <cstddef>
@@ -40,10 +40,10 @@ class AsmGenerator {
     AsmGenerator(IRModule &mod, std::ostream &out) : module(mod), os(out) {};
 
     void generate() {
-        // 1. 生成符号表
+        // 生成符号表
         gen_symbol();
 
-        // 2. 生成代码段
+        // 生成代码段
         os << std::endl << "# --- Text Segment ---" << std::endl;
         emit("LOD R" + std::to_string(REG_SP) + ", 65535", "Init Stack Pointer");
         emit("LOD R" + std::to_string(REG_FP) + ", R" + std::to_string(REG_SP),
@@ -53,12 +53,12 @@ class AsmGenerator {
         emit_label("EXIT");
         emit("END");
 
-        // 3. 遍历所有函数
+        // 遍历所有函数
         for (auto &func : module.functions) {
             visit_function(func);
         }
 
-        // 4. 数据段
+        // 数据段
         visit_globals();
     }
 
@@ -602,13 +602,7 @@ class AsmGenerator {
         // Case 3c: 值在 alloca 中 (即操作数是 %ptr，它是个 alloca)
         if (alloca_map.count(name)) {
             spill_reg(target_reg, "load alloca addr"); // 腾出目标寄存器
-            get_var_address(op, target_reg);           // 加载 %0 的地址到 target_reg
-            // 注意：这里加载的是 alloca 的 *地址*，而不是 alloca 的 *内容*
-            // 这适用于 GEP, STORE, LOAD 的 %ptr 参数
-            // 但如果 %ptr 本身被用作 *值*（例如，参数传递），我们需要吗？
-            // ensure_in_reg 假定我们总是想要 *值*。
-            // 对于 alloca (%ptr)，它的 "值" 就是它在栈上的地址。
-            // 所以 get_var_address (加载地址) 是正确的。
+            get_var_address(op, target_reg);
             return;
         }
 
@@ -640,10 +634,10 @@ class AsmGenerator {
         }
         auto name = result_op.name;
 
-        // 1. 溢出目标寄存器中已有的任何内容
+        // 溢出目标寄存器中已有的任何内容
         spill_reg(target_reg, "assign");
 
-        // 2. 如果此变量已在 *其他* 寄存器中，清除旧的映射
+        // 如果此变量已在其他寄存器中，清除旧的映射
         if (reg_cache.count(name)) {
             int old_reg = reg_cache.at(name);
             if (old_reg != target_reg) {
@@ -651,7 +645,7 @@ class AsmGenerator {
             }
         }
 
-        // 3. 建立新映射
+        // 建立新映射
         reg_cache[name] = target_reg;
         reg_cache_rev[target_reg] = name;
         // 调用者现在将发出指令，将新值放入 target_reg

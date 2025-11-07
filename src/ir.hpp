@@ -75,11 +75,11 @@ enum class IROp {
     BRLT,
     BRGT,
     // 比较 (设置标志位)
-    TEST, // (在我们的实现中，TEST 被内置到条件跳转中)
+    TEST,
     // 内存
     ALLOCA, // 分配栈空间
-    LOAD,   // 从内存加载
-    STORE,  // 存储到内存
+    LOAD,   // 从内存加载 arg{0.ptr} -> ret(val)
+    STORE,  // 存储到内存 arg{0.val -> 1.ptr}
     GEP,    // 获取元素指针
     // 算术
     ADD,
@@ -225,7 +225,6 @@ struct IRModule {
     std::vector<IRFunction> functions;
     std::unordered_map<std::string, IROperand> global_symbols;
 
-    // 完整的 Dump 实现
     void dump(std::ostream &os) const {
         os << "; --- Global Variables ---\n";
         for (const auto &g : globals) {
@@ -254,7 +253,7 @@ struct IRModule {
                 }
 
                 for (const auto &i : b.insts) {
-                    if (i.op == IROp::LABEL) continue; // 已经打印过
+                    if (i.op == IROp::LABEL) continue;
                     i.dump(os);
                     os << "\n";
                 }
@@ -313,9 +312,7 @@ struct IRModule {
     }
 };
 
-// ========================================================
 // --- IR 生成器 ---
-// ========================================================
 class IRGenerator {
   public:
     IRModule module;
@@ -325,14 +322,12 @@ class IRGenerator {
     }
 
   private:
-    // --- 状态 ---
     IRFunction *cur_func = nullptr;
     IRBasicBlock *cur_block = nullptr;
     int label_cnt = 0;
     int str_cnt = 0;
     std::vector<std::pair<std::string, std::string>> loop_stack; // <continue_lbl, break_lbl>
 
-    // --- 辅助工具 ---
     std::string new_label(const std::string &prefix = "L") {
         return prefix + std::to_string(label_cnt++);
     }
@@ -354,7 +349,6 @@ class IRGenerator {
         cur_block->insts.emplace_back(op, std::move(args), std::move(res));
     }
 
-    // --- 分发 ---
     void dispatch(ASTNode *node) {
         if (!node) return;
         // 顶层
@@ -550,7 +544,7 @@ class IRGenerator {
 
     // --- 节点 Visit 方法 ---
     void visit(ProgramNode *node) {
-        // Pass 1: 注册全局符号
+        // 注册全局符号
         for (auto &def : node->definitions->nodes) {
             if (auto fn = dynamic_cast<FunctionNode *>(def.get())) {
                 module.global_symbols[fn->name] = IROperand::create_global("@" + fn->name,
@@ -565,7 +559,7 @@ class IRGenerator {
                 }
             }
         }
-        // Pass 2: 生成函数体
+        // 生成函数体
         for (auto &def : node->definitions->nodes) {
             if (dynamic_cast<FunctionNode *>(def.get())) {
                 dispatch(def.get());
@@ -615,9 +609,6 @@ class IRGenerator {
                      ? std::vector<IROperand>{}
                      : std::vector<IROperand>{ IROperand::create_imm(0, IRType::get_i32()) });
         }
-        // cur_func->build_cfg();
-        // cur_func->compute_dominators();
-        // cur_func->compute_dominance_frontiers();
         cur_func = nullptr;
     }
 
@@ -709,7 +700,7 @@ class IRGenerator {
         std::string default_target = end_label;                  // 默认跳转到结尾
         std::string pending_label;                               // "fall-through" 标签
 
-        // Pass 1: 扫描 body，构建标签映射
+        // 扫描 body，构建标签映射
         for (auto &stmt_ptr : node->body->nodes) {
             ASTNode *stmt = stmt_ptr.get();
             if (auto case_node = dynamic_cast<CaseStatementNode *>(stmt)) {
@@ -727,7 +718,7 @@ class IRGenerator {
             }
         }
 
-        // Pass 2: 生成跳转表
+        // 生成跳转表
         for (const auto &[case_val, target_label] : case_targets) {
             IROperand imm = IROperand::create_imm(case_val, IRType::get_i32());
             emit(IROp::TEST, { val, imm }); // 假设 TEST 比较 val 和 imm
@@ -736,7 +727,7 @@ class IRGenerator {
         // 跳转到 default (或 end)
         emit(IROp::BR, { IROperand::create_label(default_target) });
 
-        // Pass 3: 生成代码块
+        // 生成代码块
         for (auto &stmt_ptr : node->body->nodes) {
             if (auto block_node = dynamic_cast<CaseBlockStatementNode *>(stmt_ptr.get())) {
                 auto it = block_labels.find(block_node);
@@ -754,16 +745,11 @@ class IRGenerator {
         loop_stack.pop_back(); // 移除 'break' 目标
     }
 
-    void visit(CaseStatementNode *_) {
-        // 在 Pass 1 中处理，这里什么都不做
-    }
+    void visit(CaseStatementNode *_) {}
 
-    void visit(DefaultStatementNode *_) {
-        // 在 Pass 1 中处理，这里什么都不做
-    }
+    void visit(DefaultStatementNode *_) {}
 
     void visit(CaseBlockStatementNode *node) {
-        // 访问块内的所有语句
         for (auto &s : node->body->nodes) dispatch(s.get());
     }
 
@@ -872,7 +858,7 @@ class IRGenerator {
 
         std::optional<IROperand> res = std::nullopt;
         if (!func_op.type->is_void()) {
-            res = new_reg(func_op.type); // func_op.type 存储了返回类型
+            res = new_reg(func_op.type);
         }
         emit(IROp::CALL, args, res);
         return res.value_or(IROperand(IROperandType::IMM, IRType::get_void()));
