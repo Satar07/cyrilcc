@@ -4,6 +4,7 @@
 #include "type.hpp" // 包含 type.hpp
 #include <cstddef>
 #include <iostream>
+#include <list>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -169,7 +170,7 @@ struct IRInstruction {
 // --- 基本块 ---
 struct IRBasicBlock {
     std::string label;
-    std::vector<IRInstruction> insts;
+    std::list<IRInstruction> insts;
 
     std::vector<IRBasicBlock *> successors;
     std::vector<IRBasicBlock *> predecessors;
@@ -205,7 +206,7 @@ struct IRFunction {
 
         for (const auto &b : blocks) {
             // 第一个指令 (LABEL) 比较特殊
-            if (!b.get()->insts.empty() && b.get()->insts[0].op == IROp::LABEL) {
+            if (!b.get()->insts.empty() && b.get()->insts.front().op == IROp::LABEL) {
                 os << b.get()->label << ":\n";
             } else {
                 os << ";" << b.get()->label << " (no label):\n";
@@ -601,8 +602,8 @@ class IRGenerator {
 
         // 如果最后一个块是 "unreachable" (即只有 label)
         // 并且它不是 entry 块，我们认为它已经被前一个块终止了
-        if (cur_block && cur_block->insts.size() == 1 && cur_block->insts[0].op == IROp::LABEL &&
-            cur_func->blocks.size() > 1) {
+        if (cur_block && cur_block->insts.size() == 1 &&
+            cur_block->insts.front().op == IROp::LABEL && cur_func->blocks.size() > 1) {
             last_block_terminated = true;
         }
 

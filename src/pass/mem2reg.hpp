@@ -104,7 +104,7 @@ class Mem2RegPhiInsertionPass : public FunctionPass {
                     if (not has_phi_inserted.contains(b)) {
                         IROperand res = F.new_reg(var_type); // 定义新SSA变量给phi节点
                         IRInstruction phi_inst(IROp::PHI, {}, res);
-                        b->insts.insert(b->insts.begin() + 1, phi_inst);
+                        b->insts.insert(++b->insts.begin(), phi_inst);
                         has_phi_inserted.insert(b);
                         work_list.push_back(b);
                         phi_to_alloca_map.insert({ res.name, alloca_name });

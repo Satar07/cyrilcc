@@ -318,9 +318,9 @@ class AsmGenerator {
                 // %base_ptr 位于 inst.args[0]
                 // 索引从 inst.args[1] (idx1) 开始
 
-                // R8 (SCRATCH_REGS[0]) 将保存计算出的地址
-                // R9 (SCRATCH_REGS[1]) 用于加载索引
-                // R10 (SCRATCH_REGS[2]) 用于加载元素大小或偏移
+                // R8 (SCRATCH_REGS[0]) = 基地址, 最终持有结果
+                // R9 (SCRATCH_REGS[1]) = 索引
+                // R10 (SCRATCH_REGS[2]) = 临时, 用于加载 size/offset, 并持有计算结果
 
                 const auto &base_op = inst.args[0];
                 const auto &result_op = inst.result.value();
@@ -342,11 +342,11 @@ class AsmGenerator {
                                      std::to_string(pointee_size),
                                  "GEP: Pointee size " + std::to_string(pointee_size));
                             ensure_in_reg(idx_op, SCRATCH_REGS[1]);
-                            emit("MUL R" + std::to_string(SCRATCH_REGS[1]) + ", R" +
-                                     std::to_string(SCRATCH_REGS[2]),
+                            emit("MUL R" + std::to_string(SCRATCH_REGS[2]) + ", R" +
+                                     std::to_string(SCRATCH_REGS[1]),
                                  "GEP: idx1 * size");
                             emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
-                                     std::to_string(SCRATCH_REGS[1]),
+                                     std::to_string(SCRATCH_REGS[2]),
                                  "GEP: base + (idx1 * size)");
                         }
                     } else {
@@ -380,11 +380,11 @@ class AsmGenerator {
                                      std::to_string(element_size),
                                  "GEP: Element size " + std::to_string(element_size));
                             ensure_in_reg(idx_op, SCRATCH_REGS[1]);
-                            emit("MUL R" + std::to_string(SCRATCH_REGS[1]) + ", R" +
-                                     std::to_string(SCRATCH_REGS[2]),
+                            emit("MUL R" + std::to_string(SCRATCH_REGS[2]) + ", R" +
+                                     std::to_string(SCRATCH_REGS[1]),
                                  "GEP: index * size");
                             emit("ADD R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
-                                     std::to_string(SCRATCH_REGS[1]),
+                                     std::to_string(SCRATCH_REGS[2]),
                                  "GEP: base + offset");
                             current_type = element_type;
                         } else {

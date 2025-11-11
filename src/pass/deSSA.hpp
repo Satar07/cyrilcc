@@ -81,12 +81,7 @@ class DeSSAPass : public FunctionPass {
 
         for (auto &block : F.blocks) {
             auto &insts = block->insts;
-            insts.erase(
-                std::remove_if(insts.begin(), insts.end(),
-                               [&](const IRInstruction &inst) {
-                                   return phis_to_delete.count(const_cast<IRInstruction *>(&inst));
-                               }),
-                insts.end());
+            insts.remove_if([&](IRInstruction &inst) { return phis_to_delete.contains(&inst); });
         }
 
         return true;

@@ -123,6 +123,6 @@ foreach m_file : m_files
             out_file,
         ],
         depends: [cyrilcc, asm_exe, machine_exe],
-        timeout: 30,
+        timeout: 1,
     )
 endforeach
