@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <iostream>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -16,10 +18,10 @@ class BuildCFGPass : public FunctionPass {
   public:
     bool run(IRFunction &F) override {
         std::unordered_map<std::string, IRBasicBlock *> label_map;
-        for (IRBasicBlock &block : F.blocks) {
-            label_map[block.label] = &block;
-            block.successors.clear();
-            block.predecessors.clear();
+        for (auto &block : F.blocks) {
+            label_map[block->label] = block.get();
+            block->successors.clear();
+            block->predecessors.clear();
         }
 
         // 加边
@@ -39,17 +41,17 @@ class BuildCFGPass : public FunctionPass {
 
         // 遍历所有基本块
         for (size_t i = 0; i < F.blocks.size(); ++i) {
-            IRBasicBlock &block = F.blocks[i];
+            auto &block = F.blocks[i];
             bool has_unconditional_terminator = false;
 
-            for (const IRInstruction &inst : block.insts) {
+            for (const IRInstruction &inst : block->insts) {
                 switch (inst.op) {
                     case IROp::RET: has_unconditional_terminator = true; break;
                     case IROp::BR: {
                         // 无条件跳转：添加一个后继
                         std::string target_label = inst.args[0].name;
                         if (label_map.count(target_label)) {
-                            add_edge(&block, label_map[target_label]);
+                            add_edge(block.get(), label_map[target_label]);
                         }
                         has_unconditional_terminator = true;
                         break;
@@ -60,7 +62,7 @@ class BuildCFGPass : public FunctionPass {
                         // 条件跳转：添加一个后继
                         std::string target_label = inst.args[0].name;
                         if (label_map.count(target_label)) {
-                            add_edge(&block, label_map[target_label]);
+                            add_edge(block.get(), label_map[target_label]);
                         }
                         break;
                     }
@@ -72,10 +74,49 @@ class BuildCFGPass : public FunctionPass {
 
             // 处理隐式“fall-through”
             if (!has_unconditional_terminator && (i + 1) < F.blocks.size()) {
-                add_edge(&block, &F.blocks[i + 1]);
+                add_edge(block.get(), F.blocks[i + 1].get());
             }
         }
         return false;
+    }
+};
+
+class DeadBlockEliminationPass : public FunctionPass {
+  public:
+    bool run(IRFunction &F) override {
+        bool ir_changed = false;
+        if (F.blocks.empty()) return false;
+
+        while (true) {
+            std::unordered_set<IRBasicBlock *> dead_blocks;
+
+            for (auto it = F.blocks.begin() + 1; it != F.blocks.end(); ++it) {
+                if (it->get()->predecessors.empty()) {
+                    dead_blocks.insert(it->get());
+                }
+            }
+
+            if (dead_blocks.empty()) {
+                break; // 没有找到死块，退出循环
+            }
+
+            ir_changed = true;
+
+            for (auto &block : F.blocks) {
+                block->predecessors.erase(
+                    std::remove_if(block->predecessors.begin(), block->predecessors.end(),
+                                   [&](IRBasicBlock *succ) { return dead_blocks.contains(succ); }),
+                    block->predecessors.end());
+            }
+
+            F.blocks.erase(std::remove_if(F.blocks.begin() + 1, F.blocks.end(),
+                                          [&](auto &block) {
+                                              return dead_blocks.contains(block.get());
+                                          }),
+                           F.blocks.end());
+        }
+
+        return ir_changed;
     }
 };
 
@@ -86,7 +127,7 @@ class DominatorTreePass : public FunctionPass {
         auto &blocks = F.blocks;
         if (blocks.empty()) return false;
 
-        IRBasicBlock *entry = blocks.data();
+        auto entry = blocks.data()->get();
         const auto num_blocks = blocks.size();
 
         std::unordered_map<IRBasicBlock *, std::unordered_set<IRBasicBlock *>>
@@ -94,40 +135,51 @@ class DominatorTreePass : public FunctionPass {
         std::unordered_set<IRBasicBlock *> all_nodes;
 
         for (auto &block : blocks) {
-            all_nodes.insert(&block);
+            all_nodes.insert(block.get());
         }
         dom_calc.insert({ entry, { entry } });
-        auto it = blocks.begin()++;
+        auto it = blocks.begin();
+        std::advance(it, 1);
         for (; it != blocks.end(); ++it) {
-            dom_calc.insert({ &(*it), all_nodes });
+            dom_calc.insert({ it->get(), all_nodes });
         }
 
         bool changed = true;
         while (changed) {
             changed = false;
-
             // 跳过entry
             for (size_t i = 1; i < num_blocks; ++i) {
-                IRBasicBlock *block = &blocks[i];
-                // dom N = intersection of dom P for all P in predecessors(N) + N
+                auto &block = blocks[i];
+                std::cout << "now calc block: " << block->label << std::endl;
+                // {d} = dom N = intersection of dom P for all P in predecessors(N) + N
                 std::unordered_set<IRBasicBlock *> new_dom;
                 for (auto pred : block->predecessors) {
-                    if (dom_calc.find(pred) == dom_calc.end()) continue;
+                    // if (not dom_calc.contains(pred)) continue;
                     if (new_dom.empty()) {
                         new_dom = dom_calc[pred];
-                    } else {
-                        std::unordered_set<IRBasicBlock *> temp;
+                        std::cout << "now is empty, so add in set: ";
                         for (auto b : new_dom) {
-                            if (dom_calc[pred].count(b)) {
-                                temp.insert(b);
-                            }
+                            std::cout << b->label << " ";
                         }
-                        new_dom = temp;
+                        std::cout << std::endl;
+                        continue;
                     }
+                    std::unordered_set<IRBasicBlock *> temp;
+                    for (auto b : new_dom) {
+                        std::cout << "check block " << b->label << " in pred " << pred->label
+                                  << std::endl;
+                        if (dom_calc[pred].contains(b)) {
+                            std::cout << "keep block " << b->label << std::endl;
+                            temp.insert(b);
+                        } else {
+                            std::cout << "erase block " << b->label << std::endl;
+                        }
+                    }
+                    new_dom = std::move(temp);
                 }
-                new_dom.insert(block);
-                if (dom_calc.at(block) != new_dom) {
-                    dom_calc[block] = std::move(new_dom);
+                new_dom.insert(block.get());
+                if (dom_calc.at(block.get()) != new_dom) {
+                    dom_calc[block.get()] = std::move(new_dom);
                     changed = true;
                 }
             }
@@ -135,24 +187,24 @@ class DominatorTreePass : public FunctionPass {
 
         // 计算 idom 和 dom_child
         for (size_t i = 1; i < num_blocks; ++i) {
-            IRBasicBlock *block_n = &blocks[i];
+            auto &block_n = blocks[i];
             // sdom(N) = dom(N) - {N}
             // 检查 d 是否是 N 的 "直接" 支配者
             // d 的所有支配者 m (sdom(d))，是否也在 N 的支配者 (sdom(N)) 中
-            for (auto dom_d : dom_calc[block_n]) {
-                if (dom_d == block_n) continue;
+            for (auto dom_d : dom_calc[block_n.get()]) {
+                if (dom_d == block_n.get()) continue;
                 bool is_idom = true;
                 // 遍历 N 的其他支配节点 m (不包括 N 和 d)
-                for (auto dom_m : dom_calc[block_n]) {
-                    if (dom_m == block_n || dom_m == dom_d) continue;
+                for (auto dom_m : dom_calc[block_n.get()]) {
+                    if (dom_m == block_n.get() || dom_m == dom_d) continue;
                     if (dom_calc[dom_d].find(dom_m) == dom_calc[dom_d].end()) {
                         is_idom = false;
                         break;
                     }
                 }
                 if (is_idom) {
-                    block_n->idom = dom_d;
-                    dom_d->dom_child.push_back(block_n);
+                    block_n.get()->idom = dom_d;
+                    dom_d->dom_child.push_back(block_n.get());
                     break;
                 }
             }
@@ -207,7 +259,7 @@ class DominanceFrontierPass : public FunctionPass {
         };
 
         // 从入口块开始递归
-        compute_df_recursive(&blocks[0]);
+        compute_df_recursive(blocks[0].get());
 
         return false; // 分析 Pass 不修改 IR
     }

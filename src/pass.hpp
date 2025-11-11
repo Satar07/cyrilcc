@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ir.hpp" // Pass 需要操作 IR
+#include <iostream>
 #include <memory>
 #include <vector>
 
@@ -53,6 +54,7 @@ class PassManager {
         for (IRFunction &F : M.functions) {
             for (auto &pass : function_passes) {
                 pass->run(F);
+                M.dump(std::cout);
             }
         }
     }

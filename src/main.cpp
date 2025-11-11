@@ -11,7 +11,9 @@
 #include "lexer.h"
 #include "parser.h"
 #include "pass.hpp"
+#include "pass/deSSA.hpp"
 #include "pass/dom_analysis.hpp"
+#include "pass/mem2reg.hpp"
 
 int main(int argc, char *argv[]) {
     const char *input_path = nullptr;
@@ -41,8 +43,12 @@ int main(int argc, char *argv[]) {
 
         PassManager pm;
         pm.addFunctionPass(new BuildCFGPass());
+        pm.addFunctionPass(new DeadBlockEliminationPass());
         pm.addFunctionPass(new DominatorTreePass());
         pm.addFunctionPass(new DominanceFrontierPass());
+
+        pm.addFunctionPass(new Mem2RegPhiInsertionPass());
+        pm.addFunctionPass(new DeSSAPass());
 
         pm.run(ir.module);
 

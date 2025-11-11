@@ -143,7 +143,7 @@ class AsmGenerator {
 
         // 映射alloca和临时变量的主页
         for (const auto &block : func.blocks) {
-            for (const auto &inst : block.insts) {
+            for (const auto &inst : block->insts) {
                 if (inst.op == IROp::ALLOCA) {
                     auto result_value = inst.result.value();
                     auto name = result_value.name;
@@ -199,7 +199,7 @@ class AsmGenerator {
 
         // 访问指令
         for (const auto &block : func.blocks) {
-            for (const auto &inst : block.insts) {
+            for (const auto &inst : block->insts) {
                 visit_instruction(inst);
             }
         }
@@ -235,10 +235,14 @@ class AsmGenerator {
             case IROp::TEST:
                 ensure_in_reg(inst.args[0], SCRATCH_REGS[0]);
                 ensure_in_reg(inst.args[1], SCRATCH_REGS[1]);
-                emit("SUB R" + std::to_string(SCRATCH_REGS[0]) + ", R" +
+                spill_reg(SCRATCH_REGS[2], "test temp");
+                emit("LOD R" + std::to_string(SCRATCH_REGS[2]) + ", R" +
+                         std::to_string(SCRATCH_REGS[0]),
+                     "Copy L for TST");
+                emit("SUB R" + std::to_string(SCRATCH_REGS[2]) + ", R" +
                          std::to_string(SCRATCH_REGS[1]),
                      "L - R");
-                emit("TST R" + std::to_string(SCRATCH_REGS[0]));
+                emit("TST R" + std::to_string(SCRATCH_REGS[2]));
                 break;
 
             case IROp::BRZ:
@@ -393,6 +397,14 @@ class AsmGenerator {
                 break;
             }
 
+            case IROp::MOVE: {
+                const auto &src_op = inst.args[0];
+                const auto &res_op = inst.result.value();
+                ensure_in_reg(src_op, SCRATCH_REGS[0]);
+                assign_to_reg(res_op, SCRATCH_REGS[0]);
+                break;
+            }
+
             // 二元操作
             case IROp::ADD:
             case IROp::SUB:
@@ -462,6 +474,7 @@ class AsmGenerator {
             // I/O
             case IROp::INPUT_I32:
             case IROp::INPUT_I8: {
+                spill_reg(REG_IO, "Input");
                 emit(inst.op == IROp::INPUT_I32 ? "ITI" : "ITC");
                 assign_to_reg(inst.result.value(), REG_IO);
                 break;

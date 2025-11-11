@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -96,7 +97,8 @@ enum class IROp {
     OUTPUT_STR,
     // 伪指令
     LABEL,
-    PHI, // φ节点
+    PHI,  // φ节点
+    MOVE, // 移动寄存器
 };
 
 // 辅助函数：将 IROp 转换为字符串
@@ -124,6 +126,7 @@ inline std::string op_to_string(IROp op) {
         case IROp::OUTPUT_STR: return "output_str";
         case IROp::LABEL: return "label";
         case IROp::PHI: return "phi";
+        case IROp::MOVE: return "move";
     }
     return "unknown_op";
 }
@@ -147,24 +150,18 @@ struct IRInstruction {
         // 3. 打印操作码 (e.g., "add")
         os << op_to_string(op);
 
+        // phi
+        if (op == IROp::PHI) {
+            for (size_t i = 0; i < args.size(); i += 2) {
+                os << " [ " << args[i].to_string() << ", " << args[i + 1].to_string() << " ]";
+                if (i + 2 < args.size()) os << ",";
+            }
+            return;
+        }
+
         // 4. 打印操作数 (e.g., " i32 %a, i32 5")
         for (const auto &arg : args) {
-            os << " ";
-
-            // 特殊处理：跳转目标 (label) 不显示类型
-            if (arg.op_type == IROperandType::LABEL && op != IROp::LABEL) {
-                os << "label " << arg.to_string();
-                continue;
-            }
-            // phi
-            if (op == IROp::PHI) {
-                for (size_t i = 0; i < args.size(); i += 2) {
-                    os << " [ " << args[i].to_string() << ", " << args[i + 1].to_string() << " ]";
-                    if (i + 2 < args.size()) os << ",";
-                }
-                continue;
-            }
-            os << arg.to_string() << " " << arg.type->to_string();
+            os << " " << arg.to_string() << " " << arg.type->to_string();
         }
     }
 };
@@ -189,13 +186,89 @@ struct IRFunction {
     std::string name;
     IRType *ret_type;
     std::vector<IROperand> params;                           // 参数列表 (虚拟寄存器)
-    std::vector<IRBasicBlock> blocks;                        // 基本块列表
+    std::vector<std::unique_ptr<IRBasicBlock>> blocks;       // 基本块列表
     std::unordered_map<std::string, IROperand> symbol_table; // 局部变量表 (映射到栈指针)
     int vreg_cnt = 0;
     IRFunction(std::string n, IRType *rt) : name(std::move(n)), ret_type(rt) {}
 
     IROperand new_reg(IRType *type) {
         return IROperand::create_reg("%" + std::to_string(vreg_cnt++), type);
+    }
+
+    void dump(std::ostream &os) const {
+        os << "define " << ret_type->to_string() << " " << name << "(";
+        for (size_t i = 0; i < params.size(); ++i) {
+            os << params[i].type->to_string() << " " << params[i].to_string();
+            if (i < params.size() - 1) os << ", ";
+        }
+        os << ") {\n";
+
+        for (const auto &b : blocks) {
+            // 第一个指令 (LABEL) 比较特殊
+            if (!b.get()->insts.empty() && b.get()->insts[0].op == IROp::LABEL) {
+                os << b.get()->label << ":\n";
+            } else {
+                os << ";" << b.get()->label << " (no label):\n";
+            }
+
+            for (const auto &i : b.get()->insts) {
+                if (i.op == IROp::LABEL) continue;
+                i.dump(os);
+                os << "\n";
+            }
+
+            os << " ; Predecessors: ";
+            if (b.get()->predecessors.empty()) {
+                os << "<none>";
+            } else {
+                for (size_t p = 0; p < b.get()->predecessors.size(); ++p) {
+                    os << b.get()->predecessors[p]->label
+                       << (p < b.get()->predecessors.size() - 1 ? ", " : "");
+                }
+            }
+            os << "\n";
+
+            os << " ; Successors: ";
+            if (b.get()->successors.empty()) {
+                os << "<none>";
+            } else {
+                for (size_t s = 0; s < b.get()->successors.size(); ++s) {
+                    os << b.get()->successors[s]->label
+                       << (s < b.get()->successors.size() - 1 ? ", " : "");
+                }
+            }
+            os << "\n";
+            os << " ; Immediate Dominator: ";
+            if (b.get()->idom) {
+                os << b.get()->idom->label;
+            } else {
+                os << "<none>";
+            }
+            os << "\n";
+
+            os << " ; Dominator Children: ";
+            if (b.get()->dom_child.empty()) {
+                os << "<none>";
+            } else {
+                for (size_t c = 0; c < b.get()->dom_child.size(); ++c) {
+                    os << b.get()->dom_child[c]->label
+                       << (c < b.get()->dom_child.size() - 1 ? ", " : "");
+                }
+            }
+            os << "\n";
+            os << " ; Dominance Frontiers: ";
+            if (b.get()->dom_frontiers.empty()) {
+                os << "<none>";
+            } else {
+                size_t count = 0;
+                for (const auto &df : b.get()->dom_frontiers) {
+                    os << df->label << (count < b.get()->dom_frontiers.size() - 1 ? ", " : "");
+                    count++;
+                }
+            }
+            os << "\n";
+        }
+        os << "}\n\n";
     }
 };
 
@@ -237,77 +310,7 @@ struct IRModule {
         os << "\n";
 
         for (const auto &f : functions) {
-            os << "define " << f.ret_type->to_string() << " " << f.name << "(";
-            for (size_t i = 0; i < f.params.size(); ++i) {
-                os << f.params[i].type->to_string() << " " << f.params[i].to_string();
-                if (i < f.params.size() - 1) os << ", ";
-            }
-            os << ") {\n";
-
-            for (const auto &b : f.blocks) {
-                // 第一个指令 (LABEL) 比较特殊
-                if (!b.insts.empty() && b.insts[0].op == IROp::LABEL) {
-                    os << b.label << ":\n";
-                } else {
-                    os << ";" << b.label << " (no label):\n";
-                }
-
-                for (const auto &i : b.insts) {
-                    if (i.op == IROp::LABEL) continue;
-                    i.dump(os);
-                    os << "\n";
-                }
-
-                os << " ; Predecessors: ";
-                if (b.predecessors.empty()) {
-                    os << "<none>";
-                } else {
-                    for (size_t p = 0; p < b.predecessors.size(); ++p) {
-                        os << b.predecessors[p]->label
-                           << (p < b.predecessors.size() - 1 ? ", " : "");
-                    }
-                }
-                os << "\n";
-
-                os << " ; Successors: ";
-                if (b.successors.empty()) {
-                    os << "<none>";
-                } else {
-                    for (size_t s = 0; s < b.successors.size(); ++s) {
-                        os << b.successors[s]->label << (s < b.successors.size() - 1 ? ", " : "");
-                    }
-                }
-                os << "\n";
-                os << " ; Immediate Dominator: ";
-                if (b.idom) {
-                    os << b.idom->label;
-                } else {
-                    os << "<none>";
-                }
-                os << "\n";
-
-                os << " ; Dominator Children: ";
-                if (b.dom_child.empty()) {
-                    os << "<none>";
-                } else {
-                    for (size_t c = 0; c < b.dom_child.size(); ++c) {
-                        os << b.dom_child[c]->label << (c < b.dom_child.size() - 1 ? ", " : "");
-                    }
-                }
-                os << "\n";
-                os << " ; Dominance Frontiers: ";
-                if (b.dom_frontiers.empty()) {
-                    os << "<none>";
-                } else {
-                    size_t count = 0;
-                    for (const auto &df : b.dom_frontiers) {
-                        os << df->label << (count < b.dom_frontiers.size() - 1 ? ", " : "");
-                        count++;
-                    }
-                }
-                os << "\n";
-            }
-            os << "}\n\n";
+            f.dump(os);
         }
     }
 };
@@ -338,8 +341,8 @@ class IRGenerator {
 
     void create_block(std::string label) {
         if (!cur_func) throw std::runtime_error("Cannot create block outside a function");
-        cur_func->blocks.emplace_back(label);
-        cur_block = &cur_func->blocks.back();
+        cur_func->blocks.emplace_back(std::make_unique<IRBasicBlock>(label));
+        cur_block = cur_func->blocks.back().get();
         emit(IROp::LABEL, { IROperand::create_label(label) });
     }
 
