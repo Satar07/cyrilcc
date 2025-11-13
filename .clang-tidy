@@ -1,0 +1,11 @@
+Checks: "
+        -*,
+        clang-analyzer-*,
+        cppcoreguidelines-*,
+        modernize-*,
+        -modernize-use-nodiscard,
+        -modernize-use-trailing-return-type,
+        cppcoreguidelines-avoid-magic-numbers,
+        bugprone-use-after-move,
+        bugprone-narrowing-conversions,
+        "

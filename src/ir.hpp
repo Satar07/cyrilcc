@@ -51,9 +51,6 @@ struct IROperand {
         op.name = std::move(name);
         return op;
     }
-    bool is_valid() const {
-        return type != nullptr;
-    }
 
     std::string to_string() const {
         switch (op_type) {
@@ -165,6 +162,19 @@ struct IRInstruction {
             os << " " << arg.to_string() << " " << arg.type->to_string();
         }
     }
+
+    bool is_terminator() const {
+        return op == IROp::RET || op == IROp::BR || op == IROp::BRZ || op == IROp::BRLT ||
+               op == IROp::BRGT;
+    }
+
+    bool is_calc() const {
+        return op == IROp::ADD || op == IROp::SUB || op == IROp::MUL || op == IROp::DIV;
+    }
+
+    bool is_cond_b() const {
+        return op == IROp::BRZ || op == IROp::BRLT || op == IROp::BRGT;
+    }
 };
 
 // --- 基本块 ---
@@ -189,6 +199,13 @@ struct IRFunction {
     std::vector<IROperand> params;                           // 参数列表 (虚拟寄存器)
     std::vector<std::unique_ptr<IRBasicBlock>> blocks;       // 基本块列表
     std::unordered_map<std::string, IROperand> symbol_table; // 局部变量表 (映射到栈指针)
+
+    std::unordered_map<std::string, IRBasicBlock *> label_to_block_map;    // 标签字符串到块的映射
+    std::unordered_map<IRInstruction *, IRBasicBlock *> inst_to_block_map; // 指令指针到块的映射
+    std::unordered_map<std::string, IRInstruction *> var_def_inst_map;     // 变量名到定义指令的映射
+    std::unordered_map<IRInstruction *, std::vector<IRInstruction *>>
+        def_use_chain; // 定义指令到使用指令列表的映射
+
     int vreg_cnt = 0;
     IRFunction(std::string n, IRType *rt) : name(std::move(n)), ret_type(rt) {}
 

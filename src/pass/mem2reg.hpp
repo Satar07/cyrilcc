@@ -235,17 +235,15 @@ class Mem2RegPhiInsertionPass : public FunctionPass {
     void cleanup_instructions(IRFunction &F) {
         for (auto &block : F.blocks) {
             auto &insts = block->insts;
-            insts.erase(std::remove_if(insts.begin(), insts.end(),
-                                       [&](const IRInstruction &inst) {
-                                           return instructions_to_delete.count(
-                                               const_cast<IRInstruction *>(&inst));
-                                       }),
-                        insts.end());
+            insts.remove_if([&](IRInstruction &inst) {
+                return instructions_to_delete.contains(&inst);
+            });
         }
     }
 
   public:
     bool run(IRFunction &F) override {
+        std::cout << "Running Mem2RegPhiInsertionPass on function: " << F.name << std::endl;
         if (F.blocks.empty()) return false;
 
         // 找出哪些 alloca 可以提升
@@ -254,19 +252,19 @@ class Mem2RegPhiInsertionPass : public FunctionPass {
             return false;
         }
 
-        F.dump(std::cout);
+        // F.dump(std::cout);
 
         // 插入 PHI 节点
         insert_phiNodes(F);
 
-        F.dump(std::cout);
+        // F.dump(std::cout);
 
         init_def_map_stack(F);
 
         // 递归重命名
         rename_recursive(F.blocks[0].get());
 
-        F.dump(std::cout);
+        // F.dump(std::cout);
 
         // 清理
         cleanup_instructions(F);

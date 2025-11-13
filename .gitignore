@@ -5,6 +5,8 @@ asm-machine/asm.l.c
 asm-machine/asm.y.c
 asm-machine/asm.y.h
 asm-machine/input.s
+buildDir/
+.idea/
 
 ### C ###
 # Prerequisites

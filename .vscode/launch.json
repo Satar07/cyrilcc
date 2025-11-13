@@ -6,7 +6,11 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/cyrilcc",
-            "args": ["test/assign.m"],
+            "args": [
+                "test/optimized/loop.m",
+                "-o",
+                "build/output.s"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

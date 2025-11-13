@@ -1,8 +1,7 @@
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <string>
 
 #include "asm_gen.hpp"
@@ -14,6 +13,7 @@
 #include "pass/deSSA.hpp"
 #include "pass/dom_analysis.hpp"
 #include "pass/mem2reg.hpp"
+#include "pass/sccp.hpp"
 
 int main(int argc, char *argv[]) {
     const char *input_path = nullptr;
@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    if ((yyin = fopen(input_path, "r")) == NULL) {
+    if ((yyin = fopen(input_path, "r")) == nullptr) {
         fprintf(stderr, "Error: open file %s failed\n", input_path);
         exit(1);
     }
@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
     yyparse();
 
     if (root) {
-        root.get()->print(std::cout);
+        root->print(std::cout);
 
         IRGenerator ir{ root };
 
@@ -46,8 +46,13 @@ int main(int argc, char *argv[]) {
         pm.addFunctionPass(new DeadBlockEliminationPass());
         pm.addFunctionPass(new DominatorTreePass());
         pm.addFunctionPass(new DominanceFrontierPass());
+        pm.addFunctionPass(new DataFlowAnalysisPass());
 
         pm.addFunctionPass(new Mem2RegPhiInsertionPass());
+        pm.addFunctionPass(new DataFlowAnalysisPass()); // 更新
+
+        pm.addFunctionPass(new SCCPPass());
+
         pm.addFunctionPass(new DeSSAPass());
 
         pm.run(ir.module);

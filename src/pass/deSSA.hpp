@@ -4,6 +4,7 @@
 #include "pass.hpp"
 #include <algorithm>
 #include <cstddef>
+#include <iostream>
 #include <iterator>
 #include <string>
 #include <unordered_map>
@@ -14,6 +15,7 @@
 class DeSSAPass : public FunctionPass {
   public:
     bool run(IRFunction &F) override {
+        std::cout << "Running DeSSAPass on function: " << F.name << std::endl;
         bool ir_changed = false;
 
         std::unordered_map<std::string, IRBasicBlock *> label_map;

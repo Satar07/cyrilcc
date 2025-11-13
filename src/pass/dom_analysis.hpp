@@ -13,10 +13,51 @@
 #include <utility>
 #include <vector>
 
+class DataFlowAnalysisPass : public FunctionPass {
+  public:
+    bool run(IRFunction &F) override {
+        std::cout << "Running DataFlowAnalysisPass on function: " << F.name << std::endl;
+
+        F.label_to_block_map.clear();
+        F.inst_to_block_map.clear();
+        F.var_def_inst_map.clear();
+        F.def_use_chain.clear();
+
+        for (auto &block : F.blocks) {
+            F.label_to_block_map[block->label] = block.get();
+            for (auto &inst : block->insts) {
+                F.inst_to_block_map[&inst] = block.get();
+                // 定义
+                if (inst.result.has_value() and inst.result->op_type == IROperandType::REG) {
+                    F.var_def_inst_map.insert({ inst.result->name, &inst });
+                    F.def_use_chain.insert({ &inst, {} });
+                }
+            }
+        }
+
+        // 使用
+        for (auto &block : F.blocks) {
+            for (auto &inst : block->insts) {
+                for (const auto &arg : inst.args) {
+                    if (arg.op_type == IROperandType::REG) {
+                        if (F.var_def_inst_map.contains(arg.name)) {
+                            IRInstruction *def_inst = F.var_def_inst_map.at(arg.name);
+                            F.def_use_chain[def_inst].push_back(&inst);
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+};
+
 // --- CFG 构建 Pass ---
 class BuildCFGPass : public FunctionPass {
   public:
     bool run(IRFunction &F) override {
+        std::cout << "Running BuildCFGPass on function: " << F.name << std::endl;
         std::unordered_map<std::string, IRBasicBlock *> label_map;
         for (auto &block : F.blocks) {
             label_map[block->label] = block.get();
@@ -84,6 +125,7 @@ class BuildCFGPass : public FunctionPass {
 class DeadBlockEliminationPass : public FunctionPass {
   public:
     bool run(IRFunction &F) override {
+        std::cout << "Running DeadBlockEliminationPass on function: " << F.name << std::endl;
         bool ir_changed = false;
         if (F.blocks.empty()) return false;
 
@@ -124,6 +166,7 @@ class DeadBlockEliminationPass : public FunctionPass {
 class DominatorTreePass : public FunctionPass {
   public:
     bool run(IRFunction &F) override {
+        std::cout << "Running DominatorTreePass on function: " << F.name << std::endl;
         auto &blocks = F.blocks;
         if (blocks.empty()) return false;
 
@@ -218,6 +261,7 @@ class DominatorTreePass : public FunctionPass {
 class DominanceFrontierPass : public FunctionPass {
   public:
     bool run(IRFunction &F) override {
+        std::cout << "Running DominanceFrontierPass on function: " << F.name << std::endl;
         auto &blocks = F.blocks;
         if (blocks.empty()) return false;
 

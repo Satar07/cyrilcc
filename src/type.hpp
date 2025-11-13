@@ -30,10 +30,8 @@ struct StructField {
 
 // --- IRType 类定义 ---
 class IRType {
-  public:
-    TypeKind kind;
-
   private:
+    TypeKind kind;
     PrimitiveType prim_type = PrimitiveType::VOID;
     IRType *base_type = nullptr; // 用于 Pointer/Array
     size_t array_size = 0;       // 用于 Array
@@ -53,6 +51,9 @@ class IRType {
   public:
     IRType(const IRType &) = delete;
     IRType &operator=(const IRType &) = delete;
+    IRType(IRType &&) = delete;
+    IRType &operator=(IRType &&) = delete;
+    ~IRType() = default;
 
     // --- 辅助查询 ---
     bool is_void() const {
@@ -204,9 +205,9 @@ class IRType {
     static IRType *get_pointer(IRType *base) {
         static std::map<IRType *, std::unique_ptr<IRType>> cache;
         if (auto it = cache.find(base); it != cache.end()) return it->second.get();
-        IRType *t = new IRType(TypeKind::POINTER, base);
-        cache[base] = std::unique_ptr<IRType>(t);
-        return t;
+        // IRType *t = new IRType(TypeKind::POINTER, base);
+        cache[base] = std::unique_ptr<IRType>(new IRType(TypeKind::POINTER, base));
+        return cache[base].get();
     }
 
     static IRType *get_char_ptr() {
@@ -216,9 +217,8 @@ class IRType {
     static IRType *get_array(IRType *base, size_t size) {
         static std::map<std::pair<IRType *, size_t>, std::unique_ptr<IRType>> cache;
         if (auto it = cache.find({ base, size }); it != cache.end()) return it->second.get();
-        IRType *t = new IRType(base, size);
-        cache[{ base, size }] = std::unique_ptr<IRType>(t);
-        return t;
+        cache[{ base, size }] = std::unique_ptr<IRType>(new IRType(base, size));
+        return cache[{ base, size }].get();
     }
 
     static IRType *register_struct(std::string name, std::vector<StructField> fields) {
@@ -228,7 +228,7 @@ class IRType {
         }
         // 为字段设置索引
         for (size_t i = 0; i < fields.size(); ++i) {
-            fields[i].index = i;
+            fields[i].index = static_cast<int>(i);
         }
         auto *t = new IRType(name, std::move(fields));
         struct_cache[name] = std::unique_ptr<IRType>(t);

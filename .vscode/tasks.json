@@ -5,13 +5,22 @@
             "label": "CMake: Configure",
             "type": "shell",
             "command": "cmake",
-            "args": ["-S", ".", "-B", "build"]
+            "args": [
+                "-S",
+                ".",
+                "-B",
+                "build"
+            ]
         },
         {
             "label": "CMake: Build",
             "type": "shell",
             "command": "cmake",
-            "args": ["--build", "build", "-j8"],
+            "args": [
+                "--build",
+                "build",
+                "-j8"
+            ],
             "group": {
                 "kind": "build"
             }
@@ -20,7 +29,23 @@
             "label": "Meson: setup build",
             "type": "shell",
             "command": "meson",
-            "args": ["setup", "build"],
+            "args": [
+                "setup",
+                "build"
+            ],
+            "group": {
+                "kind": "build"
+            }
+        },
+        {
+            "label": "Meson: test",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "test",
+                "-C",
+                "build"
+            ],
             "group": {
                 "kind": "build"
             }
@@ -29,7 +54,11 @@
             "label": "Meson: compile",
             "type": "shell",
             "command": "meson",
-            "args": ["compile", "-C", "build"],
+            "args": [
+                "compile",
+                "-C",
+                "build"
+            ],
             "group": {
                 "kind": "build"
             }
@@ -37,17 +66,34 @@
         {
             "label": "Run",
             "type": "shell",
-            "command": "./cyrilcc",
-            "args": ["arg1", "arg2"],
+            "command": "./build/cyrilcc",
+            "args": [
+                "test/optimized/loop.m",
+                "-o",
+                "build/out.s"
+            ],
             "options": {
-                "cwd": "${workspaceFolder}/build"
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Test",
+            "type": "shell",
+            "command": "./test.sh",
+            "args": [],
+            "options": {
+                "cwd": "${workspaceFolder}"
             }
         },
         {
             "label": "Clean",
             "type": "shell",
             "command": "rm",
-            "args": ["-rf", "build"]
+            "args": [
+                "-rf",
+                "build"
+            ],
+            "problemMatcher": []
         }
     ]
 }
