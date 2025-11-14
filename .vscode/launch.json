@@ -7,7 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/cyrilcc",
             "args": [
-                "test/optimized/loop.m",
+                "test/optimized/twlm.m",
                 "-o",
                 "build/output.s"
             ],

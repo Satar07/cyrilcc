@@ -61,7 +61,7 @@ int yywrap() { return 1; }
     DBG_PRINT("STRING_LITERAL: %s\n", yytext);
     yylval.str = strdup(yytext + 1);
     yylval.str[yyleng - 2] = '\0';
-    return STRING_LITERAL; // TODO 需要编写转义程序
+    return STRING_LITERAL;
 }
 
 [ \t\r\n]

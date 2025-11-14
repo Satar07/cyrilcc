@@ -3,7 +3,6 @@
 #include "ir.hpp"
 #include "pass.hpp"
 #include "type.hpp"
-#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -38,14 +37,16 @@ class Mem2RegPhiInsertionPass : public FunctionPass {
      */
     void analyze_allocas(IRFunction &F) {
         promotable_allocas.clear();
-        auto &entry_block = F.blocks[0];
 
         std::vector<IRInstruction *> candidate_allocas;
-        for (auto &inst : entry_block->insts) {
-            if (inst.op == IROp::ALLOCA) {
-                candidate_allocas.push_back(&inst);
+        for (auto &block : F.blocks) {
+            for (auto &inst : block->insts) {
+                if (inst.op == IROp::ALLOCA) {
+                    candidate_allocas.push_back(&inst);
+                }
             }
         }
+
         if (candidate_allocas.empty()) return;
 
         for (IRInstruction *alloca_inst : candidate_allocas) {

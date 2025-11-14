@@ -68,7 +68,7 @@
             "type": "shell",
             "command": "./build/cyrilcc",
             "args": [
-                "test/optimized/loop.m",
+                "test/optimized/sccp.m",
                 "-o",
                 "build/out.s"
             ],

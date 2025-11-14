@@ -97,7 +97,6 @@ class AsmGenerator {
                 emit(dbs, "String: " + global.escaped_init_str());
             } else {
                 // 假定所有其他全局变量为 4 字节，零初始化
-                // TODO: 支持基于类型的正确大小和初始化
                 emit("DBN 0, 4", "Global var: " + global.name);
             }
         }

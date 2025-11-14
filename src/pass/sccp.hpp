@@ -273,14 +273,9 @@ class SCCPPass : public FunctionPass {
                         cond_met = (v1 > v2);
 
                     if (cond_met) {
-                        // 条件满足，*只*执行这个分支
                         mark_block_executable(branch_succ);
-                        // 既然这个分支被执行了，这个块的控制流就到此为止
-                        // (例如, 'if' 为 true, 'else' 的 'br' 就不会被执行)
                         return;
                     } else {
-                        // 条件不满足，这个分支是死代码
-                        // 什么也不做，循环会继续到下一条指令 (即 'else' 的 'br')
                         continue;
                     }
                 }
