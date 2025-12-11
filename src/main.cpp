@@ -10,6 +10,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "pass.hpp"
+#include "pass/GVNPass.hpp"
 #include "pass/deSSA.hpp"
 #include "pass/dom_analysis.hpp"
 #include "pass/mem2reg.hpp"
@@ -52,6 +53,7 @@ int main(int argc, char *argv[]) {
         pm.addFunctionPass(new DataFlowAnalysisPass()); // 更新
 
         pm.addFunctionPass(new SCCPPass());
+        // pm.addFunctionPass(new GVNPass());
 
         pm.addFunctionPass(new DeSSAPass());
 
