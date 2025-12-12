@@ -399,8 +399,14 @@ class AsmGenerator {
             case IROp::MOVE: {
                 const auto &src_op = inst.args[0];
                 const auto &res_op = inst.result.value();
-                ensure_in_reg(src_op, SCRATCH_REGS[0]);
-                assign_to_reg(res_op, SCRATCH_REGS[0]);
+                if (src_op.op_type == IROperandType::REG && reg_cache.count(src_op.name) &&
+                    !reg_cache_rev.count(SCRATCH_REGS[0])) {
+                    int src_reg = reg_cache.at(src_op.name);
+                    assign_to_reg(res_op, src_reg);
+                } else {
+                    ensure_in_reg(src_op, SCRATCH_REGS[0]);
+                    assign_to_reg(res_op, SCRATCH_REGS[0]);
+                }
                 break;
             }
 

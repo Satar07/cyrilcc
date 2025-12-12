@@ -7,15 +7,14 @@ project(
 
 parser_dir = meson.current_build_dir()
 
-flex_prog = find_program('flex', dirs: '/opt/homebrew/opt/flex/bin')
-bison_prog = find_program('bison', dirs: '/opt/homebrew/opt/bison/bin')
+flex_prog = find_program('flex')
+bison_prog = find_program('bison')
 
 # bison -d -o parser.cpp --defines=parser.h parser.y
 gen_bison = generator(
     bison_prog,
     output: ['@BASENAME@.cpp', '@BASENAME@.h'],
     arguments: [
-        # '-Wcounterexamples',
         '-d',
         '-o', '@OUTPUT0@',
         '--defines=@OUTPUT1@',
