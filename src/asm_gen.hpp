@@ -528,7 +528,6 @@ class AsmGenerator {
         if (reg_cache_rev.count(reg)) {
             std::string name_to_spill = reg_cache_rev.at(reg);
 
-            // --- 优化开始 ---
             // 只有当寄存器是 Dirty 的时候，才真正写回内存
             if (dirty_regs.count(reg)) {
                 if (!temp_home_map.count(name_to_spill)) {
@@ -549,7 +548,6 @@ class AsmGenerator {
                 // 写回后，寄存器变干净了（其实马上就要被擦除了，但这保持逻辑一致）
                 dirty_regs.erase(reg);
             }
-            // --- 优化结束 ---
 
             reg_cache.erase(name_to_spill);
             reg_cache_rev.erase(reg);
@@ -660,7 +658,6 @@ class AsmGenerator {
         reg_cache[name] = target_reg;
         reg_cache_rev[target_reg] = name;
 
-        // --- 优化: 刚从栈上读进来，内容一致，是 Clean 的 ---
         dirty_regs.erase(target_reg);
     }
 
@@ -687,7 +684,6 @@ class AsmGenerator {
         reg_cache[name] = target_reg;
         reg_cache_rev[target_reg] = name;
 
-        // --- 优化: 这是一个新计算的值，还没同步到栈上，所以是 Dirty ---
         dirty_regs.insert(target_reg);
     }
 
