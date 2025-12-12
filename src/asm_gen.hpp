@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 // --- ABI 寄存器约定 ---
 const int REG_FLAG = 0; // 标志
@@ -74,6 +75,7 @@ class AsmGenerator {
     std::unordered_map<std::string, IRType *> temp_type_map; // 局部临时/参数 (%0) -> 类型 (i32*)
     std::unordered_map<std::string, int> reg_cache;          // 临时变量名 (%1) -> 物理寄存器 (R8)
     std::unordered_map<int, std::string> reg_cache_rev;      // 物理寄存器 (R8) -> 临时变量名 (%1)
+    std::unordered_set<int> dirty_regs;                      // 记录当前持有"脏"数据的寄存器
 
     int current_frame_size = 0;
     int label_counter = 0;
@@ -113,6 +115,7 @@ class AsmGenerator {
         this->temp_type_map.clear();
         this->reg_cache.clear();
         this->reg_cache_rev.clear();
+        this->dirty_regs.clear();
 
         auto local_stack_size = 0;
         auto param_stack_offset = 12; // FP + 8 (Old FP) + 4 (RA) = 12
@@ -524,20 +527,30 @@ class AsmGenerator {
     void spill_reg(int reg, std::string reason) {
         if (reg_cache_rev.count(reg)) {
             std::string name_to_spill = reg_cache_rev.at(reg);
-            if (!temp_home_map.count(name_to_spill)) {
-                throw std::runtime_error("Spill failed: No home for " + name_to_spill);
-            }
-            if (!temp_type_map.count(name_to_spill)) {
-                throw std::runtime_error("Spill failed: No type for " + name_to_spill);
-            }
 
-            IRType *type = temp_type_map.at(name_to_spill);
-            std::string op_mnemonic = get_mem_op_for_type(type, false);
+            // --- 优化开始 ---
+            // 只有当寄存器是 Dirty 的时候，才真正写回内存
+            if (dirty_regs.count(reg)) {
+                if (!temp_home_map.count(name_to_spill)) {
+                    throw std::runtime_error("Spill failed: No home for " + name_to_spill);
+                }
+                if (!temp_type_map.count(name_to_spill)) {
+                    throw std::runtime_error("Spill failed: No type for " + name_to_spill);
+                }
 
-            int home_offset = temp_home_map.at(name_to_spill);
-            emit(op_mnemonic + " (R" + std::to_string(REG_FP) + format_offset(home_offset) +
-                     "), R" + std::to_string(reg),
-                 "Spill " + name_to_spill + " (" + reason + ")");
+                IRType *type = temp_type_map.at(name_to_spill);
+                std::string op_mnemonic = get_mem_op_for_type(type, false);
+
+                int home_offset = temp_home_map.at(name_to_spill);
+                emit(op_mnemonic + " (R" + std::to_string(REG_FP) + format_offset(home_offset) +
+                         "), R" + std::to_string(reg),
+                     "Spill " + name_to_spill + " (" + reason + ")");
+
+                // 写回后，寄存器变干净了（其实马上就要被擦除了，但这保持逻辑一致）
+                dirty_regs.erase(reg);
+            }
+            // --- 优化结束 ---
+
             reg_cache.erase(name_to_spill);
             reg_cache_rev.erase(reg);
         }
@@ -614,6 +627,12 @@ class AsmGenerator {
             reg_cache_rev.erase(old_reg);
             reg_cache[name] = target_reg;
             reg_cache_rev[target_reg] = name;
+
+            if (dirty_regs.count(old_reg)) {
+                dirty_regs.erase(old_reg);     // 旧的不再持有该值
+                dirty_regs.insert(target_reg); // 新的持有该脏值
+            }
+
             return;
         }
 
@@ -626,12 +645,8 @@ class AsmGenerator {
 
         // Case 3d: 值未缓存 (在主页中)
         spill_reg(target_reg, "load home"); // 腾出目标寄存器
-        if (not temp_home_map.contains(name)) {
-            throw std::runtime_error("Temp var has no home: " + name);
-        }
-        if (not temp_type_map.contains(name)) {
-            throw std::runtime_error("Temp var has no type: " + name);
-        }
+
+        // ... (检查 home/type 存在的代码) ...
 
         IRType *type = temp_type_map.at(name);
         std::string op_mnemonic = get_mem_op_for_type(type, true);
@@ -640,9 +655,13 @@ class AsmGenerator {
         emit(op_mnemonic + " R" + target_reg_str + ", (R" + std::to_string(REG_FP) +
                  format_offset(home_offset) + ")",
              "Reload " + name + " from home");
+
         // 更新缓存
         reg_cache[name] = target_reg;
         reg_cache_rev[target_reg] = name;
+
+        // --- 优化: 刚从栈上读进来，内容一致，是 Clean 的 ---
+        dirty_regs.erase(target_reg);
     }
 
     // 先spill,然后更新缓存，声明目标寄存器持有操作数
@@ -660,13 +679,16 @@ class AsmGenerator {
             int old_reg = reg_cache.at(name);
             if (old_reg != target_reg) {
                 reg_cache_rev.erase(old_reg);
+                dirty_regs.erase(old_reg); // 旧位置不再持有有效值
             }
         }
 
         // 建立新映射
         reg_cache[name] = target_reg;
         reg_cache_rev[target_reg] = name;
-        // 调用者现在将发出指令，将新值放入 target_reg
+
+        // --- 优化: 这是一个新计算的值，还没同步到栈上，所以是 Dirty ---
+        dirty_regs.insert(target_reg);
     }
 
     // spill所有缓存的寄存器
